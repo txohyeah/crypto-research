@@ -33,7 +33,8 @@ def fmt(price, chg):
     return f"${price:,.0f} ({sign}{chg:.1f}%)" if chg is not None else f"${price:,.0f}"
 
 
-def main() -> None:
+def snapshot() -> dict:
+    """行情快照。单个数据源失败不影响整体，字段缺失时值为 null。"""
     out = {"btc": None, "eth": None, "fng": None}
     try:
         px = get("https://api.coingecko.com/api/v3/simple/price"
@@ -48,7 +49,11 @@ def main() -> None:
         out["fng"] = f"{d['value']} {d['value_classification']}"
     except Exception:
         pass
-    print(json.dumps(out, ensure_ascii=False))
+    return out
+
+
+def main() -> None:
+    print(json.dumps(snapshot(), ensure_ascii=False))
 
 
 if __name__ == "__main__":

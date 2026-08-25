@@ -17,10 +17,12 @@ TARGET_OPEN_ID = "ou_152f981a4053515ca573ab8159e9e09b"  # 晓道友 P2P 会话
 BASE = "https://open.feishu.cn/open-apis"
 
 
-def main() -> None:
-    path = sys.argv[1]
-    name = os.path.basename(path)
+def send_file(path: str) -> str:
+    """上传并投递文件到飞书 P2P 会话，成功返回 file_key。失败抛异常。
 
+    纯 Channel 职责：只管送达。push_log/runs 记账由 deliver_digest 统一负责。
+    """
+    name = os.path.basename(path)
     cfg = json.load(open(CONFIG))["channels"]["feishu"]
     sess = requests.Session()
     sess.trust_env = False  # 国内接口，禁用环境代理直连
@@ -50,7 +52,13 @@ def main() -> None:
     sent = r.json()
     if sent.get("code") != 0:
         raise RuntimeError(f"发送失败: {sent.get('code')} {sent.get('msg')}")
-    print(f"OK 已发送 {name} (file_key={file_key[:12]}…)")
+    return file_key
+
+
+def main() -> None:
+    path = sys.argv[1]
+    file_key = send_file(path)
+    print(f"OK 已发送 {os.path.basename(path)} (file_key={file_key[:12]}…)")
 
 
 if __name__ == "__main__":

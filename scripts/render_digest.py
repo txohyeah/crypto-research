@@ -17,10 +17,10 @@ import argparse
 import html
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SH_TZ = datetime.now().astimezone().tzinfo
+SH_TZ = timezone(timedelta(hours=8))  # 与其他脚本统一东八区，避免依赖服务器本地时区
 
 CSS = """
 :root{--bg:#f6f7f9;--card:#fff;--tx:#1a1f26;--mut:#5b6472;--acc:#2563eb;
@@ -126,6 +126,42 @@ def render(d: dict) -> str:
     return "\n".join(parts)
 
 
+def validate(d) -> list[str]:
+    """Digest JSON schema 校验（接缝①的输出端防御）。
+
+    返回错误列表，空列表 = 通过。缺 major/opps 键容错为空栏；
+    title/what 缺失是真错误——卡片没有主体内容没法渲染。
+    """
+    if not isinstance(d, dict):
+        return ["digest 必须是 JSON object"]
+    errs = []
+    if not isinstance(d.get("date"), str) or not d["date"].strip():
+        errs.append("缺少必填字符串字段 date (YYYY-MM-DD)")
+    majors = d.get("major", [])
+    opps = d.get("opps", [])
+    if not isinstance(majors, list):
+        errs.append("major 必须是数组")
+        majors = []
+    if not isinstance(opps, list):
+        errs.append("opps 必须是数组")
+        opps = []
+    for i, it in enumerate(majors):
+        if not isinstance(it, dict) or not str(it.get("title", "")).strip():
+            errs.append(f"major[{i}] 缺少 title")
+    for i, it in enumerate(opps):
+        if not isinstance(it, dict) or not str(it.get("what", "")).strip():
+            errs.append(f"opps[{i}] 缺少 what(做什么)")
+    return errs
+
+
+def render_to_file(digest: dict, out_dir=None) -> Path:
+    out_dir = Path(out_dir) if out_dir else Path(__file__).parent.parent / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{digest.get('date', 'undated').replace('-', '')}区块链早报.html"
+    path.write_text(render(digest), encoding="utf-8")
+    return path
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--market", help="market.py 输出的 JSON 文件路径")
@@ -133,14 +169,15 @@ def main() -> None:
     digest = json.load(sys.stdin)
     if args.market and Path(args.market).exists():
         digest["market"] = json.load(open(args.market))
-    out_dir = Path(__file__).parent.parent / "out"
-    out_dir.mkdir(exist_ok=True)
 
-    html_text = render(digest)
-    filename = f"{digest.get('date', 'undated').replace('-', '')}区块链早报.html"
-    path = out_dir / filename
-    path.write_text(html_text, encoding="utf-8")
-    print(path)
+    errs = validate(digest)
+    if errs:
+        print("[fail] digest 校验未通过：", file=sys.stderr)
+        for e in errs:
+            print("  -", e, file=sys.stderr)
+        sys.exit(2)
+
+    print(render_to_file(digest))
 
 
 if __name__ == "__main__":

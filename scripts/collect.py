@@ -141,7 +141,10 @@ def main() -> None:
     conn.execute(
         """INSERT INTO runs(date, state, stats, errors, started_at, finished_at)
            VALUES(?, 'collected', ?, ?, ?, ?)
-           ON CONFLICT(date) DO UPDATE SET state='collected',
+           ON CONFLICT(date) DO UPDATE SET
+             -- 幂等保护：当天已投递(delivered)后重跑采集，只刷新快照、绝不把状态降级，
+             -- 否则后续 deliver_digest 的幂等检查会被绕过导致重复推送
+             state=CASE WHEN runs.state='delivered' THEN runs.state ELSE 'collected' END,
              stats=excluded.stats, errors=excluded.errors,
              finished_at=excluded.finished_at""",
         (run_date, json.dumps(stats, ensure_ascii=False),
