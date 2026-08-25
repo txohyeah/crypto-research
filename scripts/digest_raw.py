@@ -42,8 +42,7 @@ def main() -> None:
             cur_src = r["source"]
             print(f"\n## {cur_src}")
         t = datetime.fromtimestamp(r["published_at"], SH_TZ).strftime("%d日%H:%M")
-        u = (r["url"] or "")[:90]
-        print(f"- [{t}] {r['title']}\n  {u}")
+        print(f"- [{t}] {r['title']}\n  {r['url']}")
 
     if not rows:
         print("（无条目——检查采集是否正常）")
