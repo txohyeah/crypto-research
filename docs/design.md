@@ -25,8 +25,6 @@
 
 | 源 | 接入方式 | 实测 | 代理 | 说明 |
 |---|---|---|---|---|
-| 律动 BlockBeats | 开放API `api.theblockbeats.news/v1/open-api/open-flash` | ✅200 | 不需要 | 中文快讯最快之一，JSON 结构化，比 RSS 更好解析 |
-| Odaily 星球日报 | RSS `odaily.news/rss` | ✅200 | 不需要 | 中文，快讯+深度混合 |
 | The Block | RSS `theblock.co/rss.xml` | ✅200 | 不需要 | 英文，机构向，融资报道多 |
 | Cointelegraph | RSS `cointelegraph.com/rss` | ✅200 | 不需要 | 英文大众向 |
 | CoinDesk | RSS `coindesk.com/arc/outboundfeeds/rss/` | ⚠️需代理 | 需要 | 英文主流，走代理即可 |
@@ -34,7 +32,9 @@
 
 **淘汰记录**：PANews RSS（rss.panewslab.com 本机不可达）；RootData 直连 403 反爬（列为 P2 可选）。
 
-> 取舍逻辑：中文 2 个 + 英文 2 个 + SEC，足够覆盖。大事件重复率极高，靠 LLM 合并去重，源多了只是浪费。
+**中文源裁撤（2026-08-25 用户决策，长期生效）**：实测全灭——Odaily /rss 返回 Next.js HTML 非 XML；BlockBeats open-flash API 恒返空数组；金色财经无响应；链捕手 404。不做修复（不注册 key、不自建 RSSHub）。理由：国内快讯多为英文源翻译+延迟版，直连英文源更快且依赖更少；中文体验由 LLM 渲染层保证（早报始终中文输出）。
+
+> 取舍逻辑：英文 3 快讯源 + SEC，足够覆盖。大事件重复率极高，靠 LLM 合并去重，源多了只是浪费。
 
 ### L2 机会层（结构化数据，核心差异化）
 
