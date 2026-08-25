@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>crypto-news · 架构与领域模型</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --line: #30363d;
+    --text: #c9d1d9; --dim: #8b949e; --faint: #6a737d;
+    --cyan: #58d5c9; --orange: #f0883e; --green: #7ee787;
+    --red: #ff7b72; --purple: #d2a8ff; --blue: #79c0ff; --gold: #e3b341;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, "Courier New", monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    line-height: 1.65; padding: 40px 24px 80px;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 26px; font-weight: 700; letter-spacing: .5px; }
+  h1 .accent { color: var(--cyan); }
+  .sub { color: var(--dim); margin-top: 6px; font-size: 14px; }
+  h2 {
+    font-size: 18px; margin: 52px 0 18px; padding-left: 12px;
+    border-left: 3px solid var(--cyan); color: #e6edf3;
+  }
+  h2 .en { color: var(--faint); font-size: 12px; font-weight: 400; margin-left: 10px; }
+  .note { color: var(--dim); font-size: 13px; margin-bottom: 14px; }
+  code, .mono { font-family: var(--mono); font-size: .92em; }
+  code.inline { background: var(--panel2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; color: var(--blue); }
+
+  /* ── 全景流水线 ─────────────────────────── */
+  .flow { display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding: 28px 2px 22px; }
+  .node {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 14px; min-width: 148px; max-width: 190px; position: relative;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .node .file { font-family: var(--mono); font-size: 12.5px; color: var(--cyan); word-break: break-all; }
+  .node .desc { font-size: 11.5px; color: var(--dim); line-height: 1.5; }
+  .node.trigger { border-color: var(--gold); background: linear-gradient(160deg,#1d1a10,#161b22); }
+  .node.trigger .file { color: var(--gold); }
+  .node.llm { border-color: var(--orange); background: linear-gradient(160deg,#211712,#161b22);
+    box-shadow: 0 0 0 1px rgba(240,136,62,.15), 0 4px 18px rgba(240,136,62,.07); }
+  .node.llm .file { color: var(--orange); }
+  .node.store-node { border-color: var(--purple); background: linear-gradient(160deg,#17131f,#161b22); }
+  .node.store-node .file { color: var(--purple); }
+  .badge {
+    align-self: flex-start; font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+    border-radius: 20px; padding: 0 8px; line-height: 17px; white-space: nowrap;
+  }
+  .b-l4 { background: rgba(88,213,201,.13); color: var(--cyan); border: 1px solid rgba(88,213,201,.35); }
+  .b-l3 { background: rgba(121,192,255,.13); color: var(--blue); border: 1px solid rgba(121,192,255,.35); }
+  .b-llm { background: rgba(240,136,62,.13); color: var(--orange); border: 1px solid rgba(240,136,62,.4); }
+  .b-out { background: rgba(126,231,135,.1); color: var(--green); border: 1px solid rgba(126,231,135,.3); }
+  .arrow { align-self: center; min-width: 30px; height: 2px; background: var(--line); position: relative; flex-shrink: 0; }
+  .arrow::after {
+    content: ''; position: absolute; right: -2px; top: -4.5px;
+    border: 5.5px solid transparent; border-left: 8px solid var(--line);
+  }
+  .arrow.dashed { background: repeating-linear-gradient(90deg,var(--line) 0 5px,transparent 5px 10px); }
+  .seam-label {
+    position: absolute; top: -21px; left: 50%; transform: translateX(-50%);
+    font-size: 10.5px; color: var(--orange); white-space: nowrap; font-weight: 600;
+  }
+
+  /* deliver_digest 展开盒 */
+  .orchestra {
+    grid-column: 1 / -1; margin-top: 18px;
+    background: var(--panel); border: 1px solid rgba(88,213,201,.3); border-radius: 12px; padding: 16px 20px;
+  }
+  .orchestra h3 { font-size: 13.5px; color: var(--cyan); margin-bottom: 12px; font-weight: 600; }
+  .steps { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .step {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    padding: 7px 11px; font-size: 12px; display: flex; align-items: center; gap: 7px;
+  }
+  .step b { color: var(--cyan); font-family: var(--mono); font-weight: 600; font-size: 11px; opacity: .85; }
+  .step small { color: var(--dim); font-size: 11px; }
+  .s-arrow { color: var(--faint); font-size: 13px; }
+  .step.guard { border-color: rgba(255,123,114,.45); }
+  .step.guard b { color: var(--red); }
+  .step.money { border-color: rgba(227,179,65,.4); }
+  .step.money b { color: var(--gold); }
+
+  /* ── 六对象映射表 ─────────────────────── */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--dim); font-weight: 600; font-size: 12px; letter-spacing: .5px; }
+  td .obj { font-weight: 700; font-size: 13.5px; }
+  td .obj i { font-style: normal; color: var(--faint); font-weight: 400; font-size: 11px; margin-left: 5px; }
+  tr td:first-child { white-space: nowrap; }
+  .o-source { color: var(--green); } .o-item { color: var(--blue); } .o-eval { color: var(--orange); }
+  .o-digest { color: var(--gold); } .o-channel { color: var(--cyan); } .o-run { color: var(--purple); }
+  td .mech { color: var(--dim); font-size: 12px; }
+
+  /* ── Store 卡片 ─────────────────────── */
+  .tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; }
+  .tbl-card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .tbl-head {
+    padding: 9px 14px; background: var(--panel2); font-family: var(--mono);
+    font-size: 13px; font-weight: 700; display: flex; justify-content: space-between; align-items: center;
+  }
+  .pk { font-size: 10px; color: var(--bg); background: var(--gold); border-radius: 4px; padding: 1px 7px; font-weight: 700; }
+  .tbl-body { padding: 10px 14px 12px; }
+  .fld { font-family: var(--mono); font-size: 11.8px; padding: 2.5px 0; color: var(--dim); }
+  .fld b { color: var(--text); font-weight: 500; }
+  .fld .cm { color: var(--faint); font-family: -apple-system,"PingFang SC",sans-serif; font-size: 11px; }
+  .fld.key b { color: var(--gold); }
+
+  /* ── 接缝 ─────────────────────────── */
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+  .contract { background: var(--panel); border: 1px dashed rgba(240,136,62,.5); border-radius: 12px; padding: 18px 20px; }
+  .contract h3 { font-size: 14.5px; color: var(--orange); margin-bottom: 4px; }
+  .contract .route { font-family: var(--mono); font-size: 11.5px; color: var(--dim); margin-bottom: 12px; }
+  .contract ul { list-style: none; }
+  .contract li { font-size: 12.8px; padding: 4px 0 4px 18px; position: relative; color: var(--text); }
+  .contract li::before { content: '▸'; position: absolute; left: 0; color: var(--orange); font-size: 11px; top: 5px; }
+  .contract li code { color: var(--blue); }
+
+  /* ── 压缩阶梯 ─────────────────────────── */
+  .ladder { display: flex; flex-direction: column; gap: 10px; }
+  .rung {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 18px;
+  }
+  .rung .stage { font-family: var(--mono); font-size: 13px; color: var(--text); min-width: 150px; }
+  .rung .where { font-size: 12.5px; color: var(--dim); flex: 1; }
+  .lv {
+    min-width: 74px; text-align: center; font-size: 11.5px; font-weight: 700;
+    border-radius: 6px; padding: 4px 10px; letter-spacing: .5px; flex-shrink: 0;
+  }
+  .lv4 { background: rgba(88,213,201,.13); color: var(--cyan); border: 1px solid rgba(88,213,201,.4); }
+  .lv3 { background: rgba(121,192,255,.13); color: var(--blue); border: 1px solid rgba(121,192,255,.4); }
+  .lv12 { background: rgba(240,136,62,.12); color: var(--orange); border: 1px solid rgba(240,136,62,.4); }
+  .lv-next { background: transparent; color: var(--faint); border: 1px dashed var(--line); }
+  .judge {
+    margin-top: 16px; background: linear-gradient(160deg,#151b17,#161b22);
+    border: 1px solid rgba(126,231,135,.25); border-radius: 10px; padding: 14px 20px;
+    font-size: 13px;
+  }
+  .judge b { color: var(--green); }
+  .judge .rule { color: var(--text); }
+
+  /* ── 设计约束 footer ─────────────────── */
+  .constraints { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 14px; }
+  .cons { background: var(--panel); border-left: 3px solid var(--purple); border-radius: 0 10px 10px 0; padding: 13px 17px; }
+  .cons b { font-size: 13.5px; color: #e6edf3; display: block; margin-bottom: 4px; }
+  .cons span { font-size: 12.5px; color: var(--dim); }
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; display:flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>crypto-news<span class="accent"> · </span>架构与领域模型</h1>
+  <div class="sub">Web3 每日早报流水线 —— 六对象领域模型 × 代码落点 × 压缩阶梯位置 &nbsp;|&nbsp;
+    <code class="inline">docs/architecture.html</code> &nbsp;·&nbsp; 2026-08-25 · v1 (41873a4)</div>
+
+  <!-- ═══════════ 1. 全景数据流 ═══════════ -->
+  <h2>每日流水线全景<span class="en">Daily Pipeline</span></h2>
+  <p class="note">每天 08:00 (Asia/Shanghai) 触发一次。<span style="color:var(--gold)">金色</span>=调度触发，
+     <span style="color:var(--orange)">橙色</span>=唯一需要模型的环节，<span style="color:var(--purple)">紫色</span>=有状态存储，
+     其余全部是确定性代码。徽章 = 压缩阶梯层级（见第 5 节）。</p>
+
+  <div class="flow">
+    <div class="node trigger">
+      <span class="badge b-llm">cron 触发</span>
+      <span class="file">qwenpaw cron<br>0 8 * * *</span>
+      <span class="desc">type=agent：唤醒 agent 执行编排<br><br>Phase B 后退化为纯 shell 定时任务</span>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="node">
+      <span class="badge b-l4">L4 硬编码</span>
+      <span class="file">collect.py</span>
+      <span class="desc">Source 执行器：直连优先/代理重试；sha1 入库即去重；解析 0 条即判故障记账</span>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="node store-node">
+      <span class="badge b-l3">Store 单点</span>
+      <span class="file">push.db (WAL)</span>
+      <span class="desc">库里只存事实：采到什么(items)、跑成什么样(runs)、推没推(push_log)</span>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="node">
+      <span class="badge b-l3">L3 工具</span>
+      <span class="file">digest_raw.py</span>
+      <span class="desc">生肉清单：24h 窗口、按源粗排、完整 URL。只粗排不判断——Evaluator 的输入契约</span>
+    </div>
+    <div class="arrow dashed"></div>
+
+    <div class="node llm">
+      <span class="badge b-llm">L1-2 判断</span>
+      <span class="file">Evaluator<br><span style="color:var(--dim);font-size:11px">Phase A: agent 担任</span></span>
+      <span class="desc"><b>全链唯一智能环节</b>：合并同事件多源、选重大事件、挖机会。<br>禁碰网络，只吃给定条目<br>Phase B 后：evaluator.py 裸 API</span>
+      <span class="seam-label">接缝① digest JSON ▼</span>
+    </div>
+    <div class="arrow dashed"></div>
+
+    <div class="node">
+      <span class="badge b-l4">L4 硬编码</span>
+      <span class="file">deliver_<wbr>digest.py</span>
+      <span class="desc">投递编排：接缝②之后一切皆确定性代码（内部见下）</span>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="node">
+      <span class="badge b-l4">L4 纯 Channel</span>
+      <span class="file">send_feishu_<wbr>file.py</span>
+      <span class="desc">OpenAPI 发文件。只管送达，不碰内容与记账 → 渠道可整体替换</span>
+    </div>
+    <div class="arrow"></div>
+
+    <div class="node" style="border-color:rgba(126,231,135,.4)">
+      <span class="badge b-out">送达</span>
+      <span class="file">YYYYMMDD<br>区块链早报.html</span>
+      <span class="desc">飞书 P2P 文件消息<br>渲染模板：render_digest.render()</span>
+    </div>
+  </div>
+
+  <!-- deliver 内部展开 -->
+  <div class="orchestra">
+    <h3>deliver_digest.py 内部 —— 幂等与记账的唯一落点</h3>
+    <div class="steps">
+      <div class="step guard"><b>①幂等检查</b><small>state=delivered 直接跳过</small></div>
+      <div class="s-arrow">→</div>
+      <div class="step guard"><b>②validate()</b><small>schema 不对 exit 2，绝不带病渲染</small></div>
+      <div class="s-arrow">→</div>
+      <div class="step"><b>③快照注入</b><small>health_line(sources表) + market.snapshot()</small></div>
+      <div class="s-arrow">→</div>
+      <div class="step"><b>④render_to_file()</b><small>HTML 落盘 out/</small></div>
+      <div class="s-arrow">→</div>
+      <div class="step money"><b>⑤send_file()</b><small>飞书投递</small></div>
+      <div class="s-arrow">→</div>
+      <div class="step money"><b>⑥落账</b><small>runs→delivered + push_log 记录；失败标 failed 可重试</small></div>
+    </div>
+    <p class="note" style="margin:12px 0 0">配套守卫：collect.py 的 upsert 含 CASE 保护——已 delivered 的 Run 重跑采集<b style="color:var(--red)">不会降级状态</b>，
+       否则幂等锚会被绕过导致重复推送。</p>
+  </div>
+
+  <!-- ═══════════ 2. 六对象映射 ═══════════ -->
+  <h2>六对象领域模型 ↔ 代码落点<span class="en">Domain Model Mapping</span></h2>
+  <table>
+    <tr><th>对象</th><th>职责边界</th><th>代码落点</th><th>关键机制</th></tr>
+    <tr>
+      <td><span class="obj o-source">Source<i>信源</i></span></td>
+      <td>声明"从哪采"，含类型/端点/代理需求/开关</td>
+      <td><code class="inline">config/sources.json</code><br><code class="inline">scripts/collect.py</code></td>
+      <td class="mech">声明式注册表 sync 进 SQLite；执行器三层容错：直连优先 → 代理重试 → 0 条即判故障</td>
+    </tr>
+    <tr>
+      <td><span class="obj o-item">Item<i>条目</i></span></td>
+      <td>采集到的一条原始快讯，只存事实不加判断</td>
+      <td><code class="inline">items 表</code></td>
+      <td class="mech">id = sha1(source|url) 主键 → <b>入库即天然去重</b>；category/importance 由评估回填</td>
+    </tr>
+    <tr>
+      <td><span class="obj o-eval">Evaluator<i>评估器</i></span></td>
+      <td>把生肉变成判断：事件合并、重要性、机会识别</td>
+      <td>Phase A: agent 会话<br>Phase B: evaluator.py(API)</td>
+      <td class="mech"><b>无状态禁碰网络</b>——幻觉控制靠架构隔离而非 prompt 恳求；输入输出均被契约钉死</td>
+    </tr>
+    <tr>
+      <td><span class="obj o-digest">Digest<i>早报</i></span></td>
+      <td>评估产物：date + major≤5 + opps≤3 + note</td>
+      <td><code class="inline">render_digest.py</code><br><code class="inline">validate()</code></td>
+      <td class="mech">schema 即契约；缺 title/date 硬拒，缺栏目键容错为空栏（只有机会栏的早报合法）</td>
+    </tr>
+    <tr>
+      <td><span class="obj o-channel">Channel<i>渠道</i></span></td>
+      <td>把成品送到用户眼前，不懂内容</td>
+      <td><code class="inline">send_feishu_file.py</code></td>
+      <td class="mech">纯函数 send_file(path)，凭据运行时读配置；未来加 RSS/邮件 = 新增文件零改动</td>
+    </tr>
+    <tr>
+      <td><span class="obj o-run">Run<i>运行</i></span></td>
+      <td>一天一次执行的轨迹与状态机</td>
+      <td><code class="inline">runs 表 + push_log 表</code></td>
+      <td class="mech"><b>date 即 run_id = 幂等锚</b>；state 机：collected→evaluated→rendered→delivered/failed</td>
+    </tr>
+  </table>
+
+  <!-- ═══════════ 3. Store 数据模型 ═══════════ -->
+  <h2>Store：SQLite 单点有状态<span class="en">data/push.db · WAL</span></h2>
+  <p class="note">设计原则：<b style="color:var(--text)">库里只存事实</b>。刻意不做 FTS（中文分词教训）；未来语义去重用 sqlite-vec 在同一文件扩展。</p>
+  <div class="tables">
+    <div class="tbl-card">
+      <div class="tbl-head" style="color:var(--blue)">items <span class="pk">PK id</span></div>
+      <div class="tbl-body">
+        <div class="fld key"><b>id</b> TEXT <span class="cm">sha1(source|url) 去重锚</span></div>
+        <div class="fld"><b>source</b> / <b>title</b> / <b>url</b></div>
+        <div class="fld"><b>published_at</b> <span class="cm">时间窗过滤</span></div>
+        <div class="fld"><b>fetched_at</b> / <b>run_id</b></div>
+        <div class="fld"><b>category</b> <span class="cm">监管/安全/宏观/机会-*</span></div>
+        <div class="fld"><b>importance</b> <span class="cm">1-10 评估回填</span></div>
+        <div class="fld"><b>reason</b> / <b>action</b> / <b>pushed_at</b></div>
+      </div>
+    </div>
+    <div class="tbl-card">
+      <div class="tbl-head" style="color:var(--purple)">runs <span class="pk">PK date</span></div>
+      <div class="tbl-body">
+        <div class="fld key"><b>date</b> TEXT <span class="cm">'YYYY-MM-DD' 幂等锚</span></div>
+        <div class="fld"><b>state</b> <span class="cm">collected→…→delivered/failed</span></div>
+        <div class="fld"><b>stats</b> JSON <span class="cm">各源 fetched/new</span></div>
+        <div class="fld"><b>errors</b> JSON <span class="cm">失败原因审计</span></div>
+        <div class="fld"><b>started_at</b> / <b>finished_at</b></div>
+      </div>
+    </div>
+    <div class="tbl-card">
+      <div class="tbl-head" style="color:var(--cyan)">push_log</div>
+      <div class="tbl-body">
+        <div class="fld"><b>run_date</b> <span class="cm">关联 runs.date</span></div>
+        <div class="fld"><b>channel</b> <span class="cm">'feishu_file'</span></div>
+        <div class="fld"><b>status</b> <span class="cm">delivered / failed</span></div>
+        <div class="fld"><b>error</b> <span class="cm">错误摘要</span></div>
+        <div class="fld"><b>delivered_at</b></div>
+        <div class="fld" style="margin-top:6px"><span class="cm">投递事实账本："那天到底推没推"</span></div>
+      </div>
+    </div>
+    <div class="tbl-card">
+      <div class="tbl-head" style="color:var(--green)">sources <span class="pk">运行时</span></div>
+      <div class="tbl-body">
+        <div class="fld"><b>name</b> / <b>type</b> / <b>endpoint</b></div>
+        <div class="fld"><b>need_proxy</b> / <b>enabled</b></div>
+        <div class="fld key"><b>last_ok_at</b> <span class="cm">health_line 统计依据</span></div>
+        <div class="fld"><b>fail_count</b> / <b>note</b></div>
+        <div class="fld" style="margin-top:6px"><span class="cm">声明式配置在 sources.json，sync 时健康字段保留不覆盖——<b style="color:var(--green)">声明与状态分离</b></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ 4. 接缝契约 ═══════════ -->
+  <h2>两个接缝<span class="en">Seams — 变化被隔离的地方</span></h2>
+  <div class="two-col">
+    <div class="contract">
+      <h3>接缝① Evaluator → Digest</h3>
+      <div class="route">agent 会话 / 未来 API 调用 &nbsp;--JSON文件--&gt; deliver_digest --stdin/--digest--&gt; validate()</div>
+      <ul>
+        <li>载体是 <code>/tmp/web3_digest.json</code> 文件，不传内存对象 → 评估环节崩溃可单独重跑</li>
+        <li><code>date</code> 必填字符串；<code>major[]</code> 每项 title 必填；<code>opps[]</code> 每项 what 必填</li>
+        <li>缺 major/opps 键 → 容错空栏；title 缺失 → exit 2 拒绝渲染（fail-closed）</li>
+        <li>校验函数与模板同文件（render_digest.py）——<b>schema 的定义者和消费者永不脱节</b></li>
+        <li>换 Evaluator 实现（agent → API）时此契约零改动</li>
+      </ul>
+    </div>
+    <div class="contract">
+      <h3>接缝② render / deliver 分离</h3>
+      <div class="route">digest JSON --&gt; render(d) : str &nbsp;·&nbsp; html_path --&gt; send_file(path)</div>
+      <ul>
+        <li>渲染是纯函数 dict→str；投递是纯函数 path→file_key</li>
+        <li>两者之间唯一的耦合点是 <code>out/YYYYMMDD区块链早报.html</code> 一个文件</li>
+        <li>新增渠道（RSS/邮件/Telegram）= 新写一个 Channel 文件 + deliver 加一行分支</li>
+        <li>dry-run 模式停在第④步：全链路可测而不打扰用户</li>
+        <li>行情/健康快照在渲染前注入，模板永远不知道数据从哪来</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ═══════════ 5. 压缩阶梯 ═══════════ -->
+  <h2>压缩阶梯位置<span class="en">Compression Ladder — 决策权放在哪</span></h2>
+  <p class="note">判据只有一个：<b style="color:var(--text)">LLM 还剩多少自由裁量权</b>。下沉方向：Prompt(1) → Skill(2) → Tool(3) → Plugin(4)。
+     第 4 层不是"更好的工具"，是把"什么时候做、做的对不对"从模型手里拿走。</p>
+  <div class="ladder">
+    <div class="rung">
+      <span class="stage">collect.py</span>
+      <span class="where">cron 触发自动执行，无选择点：直连→代理→记故障，路径唯一</span>
+      <span class="lv lv4">第4层 Plugin</span>
+    </div>
+    <div class="rung">
+      <span class="stage">digest_raw.py</span>
+      <span class="where">确定性 CLI，参数固定输出确定；但由上游决定何时调它</span>
+      <span class="lv lv3">第3层 Tool</span>
+    </div>
+    <div class="rung" style="border-color:rgba(240,136,62,.4)">
+      <span class="stage">Evaluator ⚠️</span>
+      <span class="where">每次 cron 唤醒全新会话现场判断——规则未沉淀前<b>故意留在低层</b>，硬编码未稳定的规则等于把浆糊浇筑成混凝土</span>
+      <span class="lv lv12">第1-2层</span>
+      <span class="lv lv-next">P1后 → L3</span>
+    </div>
+    <div class="rung">
+      <span class="stage">deliver_digest.py</span>
+      <span class="where">幂等/校验/落账全是 if 和 SQL；fail-closed + delivered 单调守卫 + 只增审计</span>
+      <span class="lv lv4">第4层 Plugin</span>
+    </div>
+    <div class="rung">
+      <span class="stage">send_feishu_file.py</span>
+      <span class="where">纯 Channel 函数，无任何模型参与；渠道整体可替换</span>
+      <span class="lv lv4">第4层 Plugin</span>
+    </div>
+  </div>
+  <div class="judge">
+    <b>下沉判据：</b><span class="rule">规则稳定 + 可枚举 + 执行路径唯一 → 压到第 4 层；需要语义理解、存在例外 → 留在上面。</span>
+    本项目的演进路线 = <b>逐环节爬梯</b>：已爬顶的环节（采集/渲染/投递/记账）永远不再需要模型；
+    Evaluator 等 P1 规则沉淀完成（Phase B）升到第 3 层，届时整条链退化为纯代码 + 一次裸 API 调用，
+    cron 从 agent 型降级为 shell 型——借 DeepSeek Harness 的判据与纪律，不搬它的微内核形态。
+  </div>
+
+  <!-- ═══════════ 6. 设计约束 ═══════════ -->
+  <h2>三条不可妥协的设计约束<span class="en">Invariants</span></h2>
+  <div class="constraints">
+    <div class="cons">
+      <b>Evaluator 无状态、禁碰网络</b>
+      <span>只吃给定条目。幻觉控制靠架构隔离——它物理上够不到编造信息的途径，而不是 prompt 里求它别编。</span>
+    </div>
+    <div class="cons">
+      <b>run_id = 日期做幂等</b>
+      <span>同日已 delivered 的 Run 重跑直接跳过；采集重跑不得降级其状态。cron 重试、手动补跑都安全。</span>
+    </div>
+    <div class="cons">
+      <b>render 与 deliver 分离</b>
+      <span>内容决策与触达渠道互不知晓。换渠道零改动内容，换渲染风格零改动投递。</span>
+    </div>
+  </div>
+
+  <footer>
+    <span>crypto-news · github.com/txohyeah/crypto-news · 设计全文见 docs/design.md</span>
+    <span>generated by hanli · 2026-08-25 · commit 41873a4</span>
+  </footer>
+</div>
+</body>
+</html>

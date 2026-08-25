@@ -2,7 +2,8 @@
 
 Web3 每日信息推送：重大事件 + 新机会雷达，每天 08:00 推送一条一分钟读完的 HTML 早报。
 
-完整设计方案见 [docs/design.md](docs/design.md)。
+完整设计方案见 [docs/design.md](docs/design.md)；
+架构与领域模型图见 [docs/architecture.html](docs/architecture.html)（浏览器打开）。
 
 ## 当前状态：v1 运行中
 
