@@ -118,6 +118,11 @@ web3_push/
 - **Evaluator 禁止碰网络**：只吃给定条目吐结果，幻觉控制是架构隔离而非 prompt 恳求
 - render 与 deliver 分离：加新渠道（邮件等）零改动内容决策
 
+**Channel 落地实现（2026-08-25 确认）**
+- 不新建 webhook：复用 QwenPaw 实例已绑定的 feishu channel（app cli_a93…，与 StockResearch 同一应用）
+- 投递命令：`qwenpaw channels send --agent-id default --channel feishu --target-user ou_152f… --target-session 59e9e09b`（目标会话=「飞书专用频道」，唯一 feishu 会话，已实测送达）
+- Phase A 的调度载体是 **agent 型 cron**：08:00 唤醒本 agent → 会话内执行 collect.py + digest_raw.py → LLM 评估渲染 → 最终回复由框架自动投递到目标会话。即 Phase A 中 render/deliver 由框架代劳，Channel 对象在 Phase B 固化时再显式建模块
+
 **存储 Schema（SQLite，v0.2 细化）**
 ```sql
 -- 条目（一等公民）
