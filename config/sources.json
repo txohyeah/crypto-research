@@ -1,0 +1,53 @@
+{
+  "_comment": "源注册表。enabled=false 的源保留配置与失败原因，修复后改 true 即可。2026-08-25 实测：中文快讯源全部失效（详见各 note），P0 以英文源运行。",
+  "sources": [
+    {
+      "name": "cointelegraph",
+      "type": "rss",
+      "endpoint": "https://cointelegraph.com/rss",
+      "need_proxy": false,
+      "enabled": true,
+      "note": "英文主流，XML已验证"
+    },
+    {
+      "name": "theblock",
+      "type": "rss",
+      "endpoint": "https://www.theblock.co/rss.xml",
+      "need_proxy": false,
+      "enabled": true,
+      "note": "机构向，融资报道多"
+    },
+    {
+      "name": "sec_press",
+      "type": "rss",
+      "endpoint": "https://www.sec.gov/news/pressreleases.rss",
+      "need_proxy": false,
+      "enabled": true,
+      "note": "监管黑天鹅一手源头；SEC要求声明式UA"
+    },
+    {
+      "name": "coindesk",
+      "type": "rss",
+      "endpoint": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+      "need_proxy": true,
+      "enabled": true,
+      "note": "直连超时，走代理"
+    },
+    {
+      "name": "blockbeats_cn",
+      "type": "blockbeats_api",
+      "endpoint": "https://api.theblockbeats.news/v1/open-api/open-flash",
+      "need_proxy": false,
+      "enabled": false,
+      "note": "2026-08-25实测：任何参数组合均返回空数组；候选方案=注册开放平台key 或 自建RSSHub"
+    },
+    {
+      "name": "odaily_cn",
+      "type": "rss",
+      "endpoint": "",
+      "need_proxy": false,
+      "enabled": false,
+      "note": "2026-08-25实测：/rss返回Next.js的HTML而非XML；待找到可用RSS端点或RSSHub"
+    }
+  ]
+}
