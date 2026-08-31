@@ -1,44 +1,57 @@
-# crypto-news
+# crypto-research
 
-Web3 每日信息推送：重大事件 + 新机会雷达，每天 08:00 推送一条一分钟读完的 HTML 早报。
+加密资产研究合并库 —— 三个子系统的统一仓库：
 
-完整设计方案见 [docs/design.md](docs/design.md)；
-架构与领域模型图见 [docs/architecture.html](docs/architecture.html)（浏览器打开）。
+| 子系统 | 目录 | 职责 |
+|--------|------|------|
+| **crypto 技术分析**（原 stock-research crypto 三件） | `src/crypto_research/` | Binance spot K 线同步、技术指标评级（golden bull）、图表、信号快照、回测、纸交易；统一 CLI |
+| **BTC 链上监控**（原 btc_analysis / crypto_trading） | `btc/` | BTC 每日采集（恐惧贪婪/ETF/MVRV/永续资金费率/未平仓量）、筑底/见顶清单、HTML 报告 + 飞书推送 |
+| **Web3 新闻早报**（原 crypto-news） | `news/` | 每日早报流水线：RSS 采集 → digest 提取 → 渲染 HTML → 飞书投递 |
 
-## 当前状态：v1 运行中
-
-每日流水线：采集入库 → Evaluator 筛选（Phase A 为 agent，Phase B 可换 LLM API）
-→ deliver_digest 一站式校验/渲染/投递/记账。cron 触发，同日幂等不重推。
-
-## Quick Start
+## 快速开始
 
 ```bash
-pip install -r requirements.txt
-cp .env.example .env   # 填写代理等配置（凭据不入库）
-python3 scripts/collect.py                          # 采集
-echo '{"date":"2026-01-01"}' | python3 scripts/render_digest.py   # 渲染试验
+# venv（已安装 pandas/matplotlib/requests/feedparser/tech-indicators 等）
+./venv/bin/python -m crypto_research.cli --help
+
+# crypto 技术分析（Binance 走 Clash 代理；见 scripts/crypto_sync.sh 环境变量）
+PYTHONPATH=src ./venv/bin/python -m crypto_research.cli crypto sync --symbol BTCUSDT --timeframe 4h --lookback-bars 600
+PYTHONPATH=src ./venv/bin/python -m crypto_research.cli crypto rate --symbol BTCUSDT --timeframe 1d --confirm-timeframe 4h
+PYTHONPATH=src ./venv/bin/python -m crypto_research.cli crypto chart --symbol BTCUSDT --timeframe 4h --output /tmp/btc.html
+PYTHONPATH=src ./venv/bin/python -m crypto_research.cli crypto signal-sync --symbol BTCUSDT --timeframe 4h
+PYTHONPATH=src ./venv/bin/python -m crypto_research.cli crypto backtest --symbol BTCUSDT --timeframe 4h
+PYTHONPATH=src ./venv/bin/python -m crypto_research.cli crypto paper-trade --symbol BTCUSDT --timeframe 4h
+
+# BTC 链上监控（完整采集 + 报告推送飞书）
+python3 btc/scripts/btc_daily_collect.py --report
+
+# Web3 早报流水线（从 news/ 目录执行，原样保留）
+cd news && python3 scripts/collect.py
 ```
 
-## 结构（六对象 → 代码落点）
+全部 crypto 命令输出单行 JSON（`{"ok":true,...}` / `{"ok":false,"error_code":...}`）。
 
-```
-config/sources.json        # Source 注册表（声明式，含每个源的实测状态）
-scripts/db.py              # Store：SQLite schema（WAL），唯一有状态模块
-scripts/collect.py         # Source 执行器：直连优先/代理重试、入库即去重、Run 记账
-scripts/digest_raw.py      # Evaluator 的输入契约：时间窗条目清单（只粗排不判断）
-scripts/market.py          # 行情快照（BTC/ETH/恐惧贪婪），供渲染注入
-scripts/render_digest.py   # Digest schema + validate() + HTML 渲染（接缝①输出端）
-scripts/send_feishu_file.py# Channel：纯投递，不管内容与记账
-scripts/deliver_digest.py  # 投递编排：幂等检查→校验→快照→渲染→投递→runs/push_log 落账
-```
+## 数据与存储
 
-关键设计约束：
+- **统一 sqlite 单库** `data/crypto.db`（原 MySQL 已废弃，2026-08-31 全量迁移）：
+  - `crypto_asset` / `crypto_ohlcv` / `crypto_signal_snapshot`（Binance K 线与信号快照）
+  - 表结构与 tushare 无关，遵循原 crypto 语义（BIGINT open_time_ms / REAL 价格 / ISO 时间字符串，UTC）
+- `news/data/push.db`：早报采集条目与投递记账
+- `btc/data/btc_monitor.db` + `crypto_monitor.db`：BTC 链上指标
+- 时间约定：crypto 库时间字段为 **UTC**；btc/news 为本地日（Asia/Shanghai）
 
-- **Evaluator 禁止碰网络**——只吃给定条目，幻觉控制靠架构隔离而非 prompt 恳求
-- **render 与 deliver 分离**——加新渠道零改动内容决策
-- **run_id=日期做幂等**——已 delivered 的 run 重跑直接跳过；采集重跑不会降级其状态
+## 定时任务
 
-## 已知问题
+| 任务 | 调度 | 位置 |
+|------|------|------|
+| crypto 4h 同步 | 每天 00/04/08/12/16/20 点 +5 分（系统 crontab） | `scripts/crypto_sync.sh 4h` |
+| crypto 1d 同步 | 每天 08:05（系统 crontab） | `scripts/crypto_sync.sh 1d` |
+| Web3 早报 | 每天 08:00（QwenPaw cron） | `news/`（cd 后执行流水线） |
+| BTC 采集+报告 | 每天 08:10（QwenPaw cron） | `btc/scripts/btc_daily_collect.py --report` |
 
-- 中文快讯源（律动/Odaily/PANews）2026-08-25 实测全部失效，见 sources.json 各 note，
-  修复路径：注册 BlockBeats 开放平台 key，或自建 RSSHub。
+## 迁移与兼容说明
+
+- Binance 请求需走 Clash 代理 + `SSL_CERT_FILE=/etc/pki/tls/cert.pem`（venv python 默认 CA 为空）——见 `scripts/crypto_sync.sh`
+- crypto 存储层由 SQLAlchemy/MySQL 重写为 sqlite3 标准库，`CryptoRepository` 方法签名与语义保持一致
+- chart/indicators/strategies 依赖公共技术包 `tech-indicators`（editable 安装于 venv）
+- 旧仓路径（stock-research / crypto_trading / btc_analysis / crypto-news）在切换并验证后退役

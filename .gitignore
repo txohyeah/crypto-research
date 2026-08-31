@@ -1,14 +1,26 @@
-# secrets —— 绝不入库
-.env
-
-# 运行数据
-data/
-out/
-*.db
-*.db-wal
-*.db-shm
-
 # python
 __pycache__/
 *.pyc
+venv/
 .venv/
+
+# secrets —— 绝不入库
+.env
+.env.*
+!.env.example
+
+# 运行数据（合并库统一数据 + 各子系统活数据）
+data/
+news/data/
+news/out/
+btc/data/
+btc/reports/
+reports/
+logs/
+temp_script/
+
+# 通用
+*.db
+*.db-wal
+*.db-shm
+*.html.tmp

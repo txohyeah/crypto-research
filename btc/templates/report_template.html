@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC 监控报告 {{ target_date }}</title>
+</head>
+<body style="margin:0;padding:20px;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+
+<div style="max-width:800px;margin:0 auto;background:white;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,0.08);overflow:hidden;">
+
+    <!-- Header -->
+    <div style="background:linear-gradient(135deg,#2c3e50,#3498db);padding:24px 32px;color:white;">
+        <h1 style="margin:0;font-size:22px;">📊 BTC 每日监控报告</h1>
+        <p style="margin:8px 0 0;opacity:0.85;font-size:14px;">{{ target_date }} · 自动生成</p>
+    </div>
+
+    <div style="padding:24px 32px;">
+
+        <!-- 核心指标 -->
+        <h2 style="color:#2c3e50;font-size:18px;margin:0 0 16px;">💰 核心指标</h2>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+            <tr style="background:#f8f9fa;">
+                <td style="padding:10px 12px;font-weight:600;">BTC 价格</td>
+                <td style="padding:10px 12px;text-align:right;font-size:18px;font-weight:bold;color:#2c3e50;">
+                    ${{ latest.price_usd | int | thousand_sep }}
+                </td>
+            </tr>
+            <tr>
+                <td style="padding:10px 12px;font-weight:600;">MVRV</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:bold;color:{{ '#e74c3c' if latest.mvrv and latest.mvrv > 1.2 else '#27ae60' }};">
+                    {{ '%.4f' % latest.mvrv if latest.mvrv else '-' }}
+                </td>
+            </tr>
+            <tr style="background:#f8f9fa;">
+                <td style="padding:10px 12px;font-weight:600;">恐惧贪婪指数</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:bold;color:{{ '#e74c3c' if latest.fear_greed_value and latest.fear_greed_value > 50 else '#27ae60' }};">
+                    {{ latest.fear_greed_value or '-' }} {{ '(' + latest.fear_greed_label + ')' if latest.fear_greed_label else '' }}
+                </td>
+            </tr>
+            <tr>
+                <td style="padding:10px 12px;font-weight:600;">资金费率</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:bold;">
+                    {{ '%.6f' % latest.funding_rate if latest.funding_rate is not none else '-' }}
+                </td>
+            </tr>
+            <tr style="background:#f8f9fa;">
+                <td style="padding:10px 12px;font-weight:600;">未平仓量</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:bold;">
+                    {{ latest.open_interest | int | thousand_sep if latest.open_interest else '-' }} BTC
+                </td>
+            </tr>
+            <tr>
+                <td style="padding:10px 12px;font-weight:600;">ETF 单日净流入</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:bold;color:{{ '#27ae60' if latest.etf_net_flow_m and latest.etf_net_flow_m > 0 else '#e74c3c' }};">
+                    {{ '+$' ~ '%.1f' % latest.etf_net_flow_m ~ 'M' if latest.etf_net_flow_m is not none else '-' }}
+                </td>
+            </tr>
+            <tr style="background:#f8f9fa;">
+                <td style="padding:10px 12px;font-weight:600;">ETF 总 AUM</td>
+                <td style="padding:10px 12px;text-align:right;font-weight:bold;">
+                    {{ '$' ~ '%.1f' % latest.etf_total_aum_b ~ 'B' if latest.etf_total_aum_b is not none else '-' }}
+                </td>
+            </tr>
+        </table>
+
+        <!-- 筑底清单 -->
+        <h2 style="color:#2c3e50;font-size:18px;margin:0 0 12px;">🎯 筑底清单</h2>
+        <div style="background:{{ signal_color }};color:white;padding:10px 16px;border-radius:8px;margin-bottom:12px;font-weight:bold;font-size:15px;">
+            满足 {{ signals_met }}/6 · {{ signal_text }}
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+            <thead>
+                <tr style="background:#f8f9fa;">
+                    <th style="padding:8px 12px;text-align:left;font-size:13px;color:#666;">状态</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:13px;color:#666;">信号</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:13px;color:#666;">当前值</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:13px;color:#666;">目标</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in signals %}
+                <tr>
+                    <td style="padding:8px 12px;border-bottom:1px solid #eee;">{{ s.icon }}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid #eee;">{{ s.name }}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid #eee;color:{{ s.color }};font-weight:bold;">{{ s.value }}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid #eee;color:#999;">{{ s.target }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- 见顶清单 v2 -->
+        <h2 style="color:#2c3e50;font-size:18px;margin:0 0 12px;">🔺 见顶清单 v2（六维三态）</h2>
+        <div style="background:{{ top_color }};color:white;padding:10px 16px;border-radius:8px;margin-bottom:12px;font-weight:bold;font-size:15px;">
+            {{ top_level_text }}
+        </div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:12px;">
+            <thead>
+                <tr style="background:#f8f9fa;">
+                    <th style="padding:8px 12px;text-align:left;font-size:13px;color:#666;">状态</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:13px;color:#666;">维度</th>
+                    <th style="padding:8px 12px;text-align:right;font-size:13px;color:#666;">当前值</th>
+                    <th style="padding:8px 12px;text-align:left;font-size:13px;color:#666;">判定说明</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for d in top_dims %}
+                <tr>
+                    <td style="padding:8px 12px;border-bottom:1px solid #eee;">{{ d.icon }}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid #eee;">{{ d.name }}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:bold;color:{{ d.color }};">{{ d.value }}</td>
+                    <td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666;">{{ d.note }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% if top_cycle %}
+        <div style="background:#eef3f8;border-left:4px solid #3498db;padding:10px 14px;border-radius:0 6px 6px 0;margin-bottom:24px;font-size:13px;color:#2c3e50;">
+            🕐 <strong>减半周期钟</strong>：{{ top_cycle.phase }}<br/>
+            <span style="color:#666;">下轮减半 ≈ {{ top_cycle.next_halving }}（剩 {{ top_cycle.days_to_next_halving }} 天）· 理论高危窗 {{ top_cycle.next_high_risk_window }}</span><br/>
+            <span style="color:#999;">规则：⚠️≥2 维过热停加仓；🔴≥2 维转折且含资金流/杠杆硬信号执行离场；慢变量单独不触发。</span>
+        </div>
+        {% endif %}
+
+        <!-- 图表区域 -->
+        {% for chart in charts %}
+        <div style="margin:24px 0;">
+            <h2 style="color:#2c3e50;font-size:18px;margin-bottom:12px;">{{ chart.icon }} {{ chart.title }}</h2>
+            <img src="data:image/png;base64,{{ chart.b64 }}" style="width:100%;max-width:900px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);" />
+        </div>
+        {% endfor %}
+
+        <!-- 近7天趋势 -->
+        <h2 style="color:#2c3e50;font-size:18px;margin:0 0 12px;">📈 近7天趋势</h2>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+            <thead>
+                <tr style="background:#f8f9fa;">
+                    <th style="padding:6px 12px;text-align:left;font-size:13px;color:#666;">日期</th>
+                    <th style="padding:6px 12px;text-align:right;font-size:13px;color:#666;">价格</th>
+                    <th style="padding:6px 12px;text-align:right;font-size:13px;color:#666;">MVRV</th>
+                    <th style="padding:6px 12px;text-align:right;font-size:13px;color:#666;">恐惧贪婪</th>
+                    <th style="padding:6px 12px;text-align:right;font-size:13px;color:#666;">ETF</th>
+                    <th style="padding:6px 12px;text-align:right;font-size:13px;color:#666;">资金费率</th>
+                    <th style="padding:6px 12px;text-align:right;font-size:13px;color:#666;">净流出</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in trend_rows %}
+                <tr>
+                    <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;">{{ row.date }}</td>
+                    <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;text-align:right;">{{ row.price }}</td>
+                    <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;text-align:right;">{{ row.mvrv }}</td>
+                    <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;text-align:right;">{{ row.fg }}</td>
+                    <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;text-align:right;">{{ row.etf }}</td>
+                    <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;text-align:right;">{{ row.fr }}</td>
+                    <td style="padding:6px 12px;border-bottom:1px solid #f0f0f0;text-align:right;">{{ row.net_flow }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <!-- 韩立提醒 -->
+        <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:16px;border-radius:0 8px 8px 0;margin-bottom:16px;">
+            <strong style="color:#856404;">⚠️ 韩立提醒：</strong>
+            <span style="color:#856404;">
+                {{ hanli_hint }}
+            </span>
+        </div>
+
+        <!-- Footer -->
+        <div style="text-align:center;color:#aaa;font-size:12px;padding-top:16px;border-top:1px solid #eee;">
+            数据源: CoinMetrics · alternative.me · Binance · Farside Investors<br/>
+            生成时间: {{ generated_at }}
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

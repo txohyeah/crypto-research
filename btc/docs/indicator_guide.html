@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BTC 筑底信号监控 — 指标解析手册</title>
+<style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; line-height: 1.6; }
+    .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #1a1a2e, #16213e); color: white; padding: 40px 32px; border-radius: 12px; margin-bottom: 24px; }
+    .header h1 { font-size: 28px; margin-bottom: 8px; }
+    .header p { opacity: 0.8; font-size: 14px; }
+    .card { background: white; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.08); padding: 24px 32px; margin-bottom: 20px; }
+    .card h2 { color: #2c3e50; font-size: 20px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #eee; }
+    .card h3 { color: #34495e; font-size: 16px; margin: 16px 0 8px; }
+    .indicator { border-left: 4px solid #3498db; padding-left: 16px; margin: 16px 0; }
+    .indicator.mvrv { border-color: #e74c3c; }
+    .indicator.fear-greed { border-color: #9b59b6; }
+    .indicator.etf { border-color: #27ae60; }
+    .indicator.oi { border-color: #f39c12; }
+    .indicator.funding { border-color: #1abc9c; }
+    .indicator.exchange { border-color: #3498db; }
+    .formula { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px; padding: 12px 16px; font-family: 'SF Mono', Monaco, monospace; font-size: 13px; margin: 8px 0; overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+    th { background: #f8f9fa; padding: 10px 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #dee2e6; }
+    td { padding: 10px 12px; border-bottom: 1px solid #eee; }
+    tr:hover { background: #f8f9fa; }
+    .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+    .tag-red { background: #fee2e2; color: #dc2626; }
+    .tag-green { background: #dcfce7; color: #16a34a; }
+    .tag-yellow { background: #fef9c3; color: #ca8a04; }
+    .tag-blue { background: #dbeafe; color: #2563eb; }
+    .warning { background: #fff3cd; border-left: 4px solid #ffc107; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 14px; }
+    .info { background: #e3f2fd; border-left: 4px solid #2196f3; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: 14px; }
+    ul { margin: 8px 0 8px 20px; }
+    li { margin: 4px 0; }
+    .checklist-table td:first-child { width: 40px; text-align: center; }
+    .footer { text-align: center; color: #999; font-size: 12px; padding: 20px; }
+    code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<div class="header">
+    <h1>📊 BTC 筑底信号监控 — 指标解析手册</h1>
+    <p>文档版本：v1.1 · 更新日期：2026-08-23</p>
+    <p style="margin-top:4px;font-size:12px;color:#ffc107;">⚠️ v1.1 修订：现货需求口径改为「30天累计+7日均值」，二次探底改为事件触发型（见清单第 4、5 项）</p>
+    <p style="margin-top:8px;font-size:13px;">数据源：CoinMetrics · alternative.me · Binance · Farside Investors</p>
+</div>
+
+<!-- 目录 -->
+<div class="card">
+    <h2>📑 目录</h2>
+    <ol style="padding-left:20px;">
+        <li><a href="#checklist" style="color:#3498db;text-decoration:none;">筑底清单总览</a></li>
+        <li><a href="#mvrv" style="color:#3498db;text-decoration:none;">MVRV 比率</a></li>
+        <li><a href="#fear-greed" style="color:#3498db;text-decoration:none;">恐惧贪婪指数</a></li>
+        <li><a href="#etf" style="color:#3498db;text-decoration:none;">ETF 资金流</a></li>
+        <li><a href="#oi" style="color:#3498db;text-decoration:none;">未平仓量 (OI)</a></li>
+        <li><a href="#funding" style="color:#3498db;text-decoration:none;">资金费率</a></li>
+        <li><a href="#exchange" style="color:#3498db;text-decoration:none;">交易所流入流出</a></li>
+        <li><a href="#action" style="color:#3498db;text-decoration:none;">行动建议矩阵</a></li>
+    </ol>
+</div>
+
+<!-- 筑底清单 -->
+<div class="card" id="checklist">
+    <h2>🎯 筑底清单（6 项信号）</h2>
+    <p style="margin-bottom:12px;color:#666;">当 <strong>3 项及以上</strong>信号满足时，标记为「可分批建仓」。仅满足 2 项为「密切关注」，否则为「观望」。</p>
+    
+    <table class="checklist-table">
+        <thead>
+            <tr><th>#</th><th>信号</th><th>目标条件</th><th>当前状态</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>1</td>
+                <td><strong>MVRV 回落 1.0-1.2</strong></td>
+                <td>1.0 ≤ MVRV ≤ 1.2</td>
+                <td><span class="tag tag-red">❌ 1.4578</span></td>
+            </tr>
+            <tr>
+                <td>2</td>
+                <td><strong>恐惧贪婪 &lt;15</strong></td>
+                <td>Fear & Greed &lt; 15</td>
+                <td><span class="tag tag-red">❌ 66</span></td>
+            </tr>
+            <tr>
+                <td>3</td>
+                <td><strong>ETF 流入 ≥14/20 天</strong></td>
+                <td>近 20 个交易日，≥14 天净流入</td>
+                <td><span class="tag tag-green">✅ 16/20</span></td>
+            </tr>
+            <tr>
+                <td>4</td>
+                <td><strong>现货需求 30天累计+7日均值</strong></td>
+                <td>30 天累计资金费率 &gt; 0 且 7 日均值 &gt; 0</td>
+                <td><span class="tag tag-green">✅ 累计 0.0018 / 7日均值 0.000073</span></td>
+            </tr>
+            <tr>
+                <td>5</td>
+                <td><strong>二次探底不破低（事件触发型）</strong></td>
+                <td>价格先跌入观察区（$57,832~$63,615），反弹不破低</td>
+                <td><span class="tag tag-yellow">⏳ 回踩未发生（$77,020）</span></td>
+            </tr>
+            <tr>
+                <td>6</td>
+                <td><strong>时间窗口 Q4</strong></td>
+                <td>当前处于 Q4（10-12月）</td>
+                <td><span class="tag tag-red">❌ 8月</span></td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <div class="info">
+        <strong>💡 设计思路：</strong>清单来自"逆向投资框架"——在市场极度恐惧、价格回落、资金流出时逐步建仓，而非追高。时间窗口设为 Q4 是因为历史统计 Q4 是 BTC 表现最好的季度。
+    </div>
+</div>
+
+<!-- MVRV -->
+<div class="card" id="mvrv">
+    <h2>📈 MVRV 比率 (Market Value to Realized Value)</h2>
+    
+    <div class="indicator mvrv">
+        <h3>定义</h3>
+        <p>MVRV = 市值 ÷ 已实现市值。反映当前价格相对所有 BTC 持有者平均成本的偏离程度。</p>
+        
+        <h3>计算公式</h3>
+        <div class="formula">
+            MVRV = Market Cap / Realized Cap<br><br>
+            Market Cap = 当前价格 × 流通量<br>
+            Realized Cap = Σ (每枚 BTC 最后移动时的价格 × 数量)
+        </div>
+        
+        <h3>数据来源</h3>
+        <p><code>CoinMetrics</code> API，每日更新。存储于 <code>daily_metrics.mvrv</code> 字段。</p>
+    </div>
+    
+    <h3>阈值解读</h3>
+    <table>
+        <tr><th>MVRV 区间</th><th>含义</th><th>操作建议</th></tr>
+        <tr>
+            <td><span class="tag tag-green">&lt; 1.0</span></td>
+            <td>价格低于持有者平均成本，市场深度亏损</td>
+            <td><strong>强烈买入信号</strong> — 历史大底区域</td>
+        </tr>
+        <tr>
+            <td><span class="tag tag-green">1.0 - 1.2</span></td>
+            <td>持有者微利，市场处于积累阶段</td>
+            <td><strong>分批建仓区</strong> — 性价比最高</td>
+        </tr>
+        <tr>
+            <td><span class="tag tag-yellow">1.2 - 1.5</span></td>
+            <td>持有者盈利，市场升温</td>
+            <td>持有 / 小心追高</td>
+        </tr>
+        <tr>
+            <td><span class="tag tag-red">&gt; 1.5</span></td>
+            <td>持有者大幅盈利，市场过热</td>
+            <td><strong>考虑减仓</strong> — 历史顶部区域</td>
+        </tr>
+    </table>
+    
+    <div class="warning">
+        <strong>⚠️ 历史参考：</strong>2018 年底 MVRV 跌至 0.8，2022 年底跌至 0.9，随后均出现 3-5 倍涨幅。当前 1.4578 属于「偏热但未到极端」区间。
+    </div>
+</div>
+
+<!-- 恐惧贪婪 -->
+<div class="card" id="fear-greed">
+    <h2>😱 恐惧贪婪指数 (Fear & Greed Index)</h2>
+    
+    <div class="indicator fear-greed">
+        <h3>定义</h3>
+        <p>综合 7 个指标计算的 0-100 分数，反映市场情绪。0 = 极度恐惧，100 = 极度贪婪。</p>
+        
+        <h3>数据来源</h3>
+        <p><code>alternative.me</code> API，每日更新。存储于 <code>daily_metrics.fear_greed_value</code> 和 <code>fear_greed_label</code>。</p>
+        
+        <h3>构成因子</h3>
+        <ul>
+            <li><strong>波动率</strong> (25%) — BTC 当前波动率 vs 30/90天均值</li>
+            <li><strong>市场成交量</strong> (25%) — 当前成交量 vs 30/90天均值</li>
+            <li><strong>社交媒体</strong> (15%) — Twitter 等平台讨论热度</li>
+            <li><strong>调查</strong> (15%) — Weekly Crypto Sentiment Survey</li>
+            <li><strong>BTC 占比</strong> (10%) — BTC 市值占比（替代币热度）</li>
+            <li><strong>Google 趋势</strong> (10%) — "Bitcoin" 搜索热度</li>
+        </ul>
+    </div>
+    
+    <h3>阈值解读</h3>
+    <table>
+        <tr><th>区间</th><th>标签</th><th>含义</th></tr>
+        <tr><td>0 - 14</td><td><span class="tag tag-red">极度恐惧</span></td><td>市场恐慌抛售，可能是底部</td></tr>
+        <tr><td>15 - 24</td><td><span class="tag tag-red">恐惧</span></td><td>市场悲观，但非极端</td></tr>
+        <tr><td>25 - 49</td><td><span class="tag tag-yellow">中性偏恐惧</span></td><td>市场犹豫，方向不明</td></tr>
+        <tr><td>50 - 54</td><td><span class="tag tag-yellow">中性</span></td><td>多空平衡</td></tr>
+        <tr><td>55 - 74</td><td><span class="tag tag-green">贪婪</span></td><td>市场乐观，FOMO 情绪</td></tr>
+        <tr><td>75 - 100</td><td><span class="tag tag-green">极度贪婪</span></td><td>市场狂热，可能是顶部</td></tr>
+    </table>
+    
+    <div class="info">
+        <strong>💡 "别人恐惧时贪婪"：</strong>清单设定 &lt;15 为满足条件，即只在市场极度恐惧时才触发。当前值 66（贪婪），说明市场情绪过热，不符合建仓条件。
+    </div>
+</div>
+
+<!-- ETF 资金流 -->
+<div class="card" id="etf">
+    <h2>🏦 ETF 资金流 (ETF Net Flow)</h2>
+    
+    <div class="indicator etf">
+        <h3>定义</h3>
+        <p>追踪美国现货 BTC ETF（如 IBIT、FBTC、GBTC 等）的每日净流入/流出金额。</p>
+        
+        <h3>数据来源</h3>
+        <p><code>Farside Investors</code> 手动整理数据，由 Agent 每日采集。存储于 <code>daily_metrics.etf_net_flow_m</code>（百万美元）和 <code>etf_total_aum_b</code>（十亿美元）。</p>
+        
+        <h3>采集方式</h3>
+        <ul>
+            <li>通过 Tavily 搜索 Farside 最新数据</li>
+            <li>Agent 解析后传入 <code>btc_daily_collect.py --etf-flow &lt;值&gt;</code></li>
+        </ul>
+    </div>
+    
+    <h3>阈值解读</h3>
+    <table>
+        <tr><th>条件</th><th>目标</th><th>含义</th></tr>
+        <tr>
+            <td>近 20 个交易日净流入天数</td>
+            <td>≥ 14 天</td>
+            <td>机构持续买入，底部确认信号</td>
+        </tr>
+        <tr>
+            <td>单日净流入</td>
+            <td>&gt; $0</td>
+            <td>当日机构资金入场</td>
+        </tr>
+    </table>
+    
+    <div class="warning">
+        <strong>⚠️ 排除非交易日：</strong>ETF 在周末和美国节假日不交易，滑动窗口只计算交易日（约 20 天/月）。
+    </div>
+</div>
+
+<!-- 未平仓量 -->
+<div class="card" id="oi">
+    <h2>📊 未平仓量 (Open Interest)</h2>
+    
+    <div class="indicator oi">
+        <h3>定义</h3>
+        <p>BTC 永续合约未平仓合约总价值。反映衍生品市场的杠杆水平和资金规模。</p>
+        
+        <h3>计算公式</h3>
+        <div class="formula">
+            OI (BTC) = 所有未平仓合约的 BTC 数量<br>
+            OI (USD) = OI (BTC) × 当前价格
+        </div>
+        
+        <h3>数据来源</h3>
+        <p><code>Binance /futures/data/openInterestHist</code>，每日同步。存储于独立的 <code>oi_daily</code> 表，同时写入 <code>daily_metrics.open_interest</code>。</p>
+    </div>
+    
+    <h3>趋势解读</h3>
+    <table>
+        <tr><th>场景</th><th>价格走势</th><th>OI 变化</th><th>含义</th></tr>
+        <tr>
+            <td>上涨 + OI 增加</td>
+            <td>↑</td><td>↑</td>
+            <td><span class="tag tag-green">多头主导</span> — 新资金入场做多，趋势健康</td>
+        </tr>
+        <tr>
+            <td>上涨 + OI 减少</td>
+            <td>↑</td><td>↓</td>
+            <td><span class="tag tag-yellow">空头平仓驱动</span> — 轧空行情，可能不可持续</td>
+        </tr>
+        <tr>
+            <td>下跌 + OI 增加</td>
+            <td>↓</td><td>↑</td>
+            <td><span class="tag tag-red">空头主导</span> — 新资金入场做空，下跌动能强</td>
+        </tr>
+        <tr>
+            <td>下跌 + OI 减少</td>
+            <td>↓</td><td>↓</td>
+            <td><span class="tag tag-yellow">多头平仓</span> — 杠杆出清，可能接近底部</td>
+        </tr>
+    </table>
+    
+    <div class="info">
+        <strong>💡 配合资金费率看：</strong>如果 OI 高 + 资金费率高，说明多头拥挤，回调风险大；如果 OI 低 + 资金费率低，说明杠杆出清，可能筑底。
+    </div>
+</div>
+
+<!-- 资金费率 -->
+<div class="card" id="funding">
+    <h2>💹 资金费率 (Funding Rate)</h2>
+    
+    <div class="indicator funding">
+        <h3>定义</h3>
+        <p>永续合约多空双方每 8 小时支付的资金费率。正值 = 多头付给空头，负值 = 空头付给多头。</p>
+        
+        <h3>计算公式</h3>
+        <div class="formula">
+            资金费率 = 指数溢价 + clamp(基差溢价 - 指数溢价, -0.05%, 0.05%)<br><br>
+            简单理解：溢价 = 合约价格 - 现货价格<br>
+            正溢价 → 多头拥挤 → 正费率（多头付费）
+        </div>
+        
+        <h3>数据来源</h3>
+        <p><code>Binance /fapi/v1/fundingRate</code>，每日同步最近 1000 条（约 333 天），按日聚合均值。存储于 <code>daily_metrics.funding_rate</code>。</p>
+    </div>
+    
+    <h3>阈值解读</h3>
+    <table>
+        <tr><th>费率区间</th><th>含义</th><th>操作建议</th></tr>
+        <tr>
+            <td><span class="tag tag-green">0.01% - 0.03%</span></td>
+            <td>正常偏多，市场温和乐观</td>
+            <td>中性，无需特别关注</td>
+        </tr>
+        <tr>
+            <td><span class="tag tag-yellow">0.03% - 0.1%</span></td>
+            <td>多头拥挤，杠杆偏高</td>
+            <td>警惕回调，不宜重仓追多</td>
+        </tr>
+        <tr>
+            <td><span class="tag tag-red">&gt; 0.1%</span></td>
+            <td>极度贪婪，多头过热</td>
+            <td><strong>高风险</strong> — 历史上常伴随暴跌</td>
+        </tr>
+        <tr>
+            <td><span class="tag tag-blue">&lt; 0%</span></td>
+            <td>空头付费，市场恐慌</td>
+            <td>可能是底部信号</td>
+        </tr>
+    </table>
+    
+    <div class="warning">
+        <strong>⚠️ 清单条件：</strong>要求 30 天累计资金费率 &gt; 0 且 7 日均值 &gt; 0（双重确认，抗噪性更强）。当前累计 0.0018，7日均值 0.000073，均满足条件。<br>
+        <span style="color:#666;">注：此口径衡量永续市场的整体方向偏好（资金费率反映多空力量），与手册中"现货需求&gt;合约需求"的严格定义存在近似，若需精确对齐需另接现货/合约成交量数据源。</span>
+    </div>
+</div>
+
+<!-- 交易所流入流出 -->
+<div class="card" id="exchange">
+    <h2>🔄 交易所流入流出 (Exchange Flow)</h2>
+    
+    <div class="indicator exchange">
+        <h3>定义</h3>
+        <p>追踪 BTC 在交易所的流入和流出量，反映大户的持仓行为。</p>
+        
+        <h3>数据来源</h3>
+        <p><code>CoinMetrics</code> API，每日更新。存储于 <code>daily_metrics.exchange_flow_in</code> 和 <code>exchange_flow_out</code>。</p>
+    </div>
+    
+    <h3>趋势解读</h3>
+    <table>
+        <tr><th>场景</th><th>含义</th></tr>
+        <tr>
+            <td><strong>流出 &gt; 流入</strong>（净流出）</td>
+            <td><span class="tag tag-green">看涨</span> — 大户将 BTC 提到冷钱包，减少卖压</td>
+        </tr>
+        <tr>
+            <td><strong>流入 &gt; 流出</strong>（净流入）</td>
+            <td><span class="tag tag-red">看跌</span> — 大户将 BTC 转入交易所，准备抛售</td>
+        </tr>
+        <tr>
+            <td><strong>大幅净流出</strong></td>
+            <td>可能是底部信号 — 机构在积累</td>
+        </tr>
+        <tr>
+            <td><strong>大幅净流入</strong></td>
+            <td>可能是顶部信号 — 大户准备套现</td>
+        </tr>
+    </table>
+    
+    <div class="info">
+        <strong>💡 "聪明钱"指标：</strong>交易所流出通常代表长期持有者在积累，是领先指标。当流出持续增加时，往往预示后续价格上涨。
+    </div>
+</div>
+
+<!-- 行动建议 -->
+<div class="card" id="action">
+    <h2>🎯 行动建议矩阵</h2>
+    
+    <table>
+        <thead>
+            <tr><th>满足信号数</th><th>状态</th><th>建议操作</th><th>仓位管理</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><strong>5-6 项</strong></td>
+                <td><span class="tag tag-green">强烈买入</span></td>
+                <td>大仓位建仓</td>
+                <td>可投入计划仓位的 60-80%</td>
+            </tr>
+            <tr>
+                <td><strong>3-4 项</strong></td>
+                <td><span class="tag tag-green">可分批建仓</span></td>
+                <td>分 3-5 批买入</td>
+                <td>每批 15-20%，设好止损</td>
+            </tr>
+            <tr>
+                <td><strong>2 项</strong></td>
+                <td><span class="tag tag-yellow">密切关注</span></td>
+                <td>准备资金，等待信号</td>
+                <td>暂不建仓，关注 MVRV 和恐惧贪婪</td>
+            </tr>
+            <tr>
+                <td><strong>0-1 项</strong></td>
+                <td><span class="tag tag-red">观望</span></td>
+                <td>不操作</td>
+                <td>市场过热，等待回调</td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <div class="warning">
+        <strong>⚠️ 风险提示：</strong>
+        <ul style="margin-top:8px;">
+            <li>清单是参考框架，不是交易信号 — 需结合宏观环境、新闻事件综合判断</li>
+            <li>历史指标不代表未来表现 — BTC 市场结构可能发生变化</li>
+            <li>永远不要 all-in — 保留 30% 以上现金应对黑天鹅</li>
+            <li>设置止损 — 建议在前期低点下方 5-10%</li>
+        </ul>
+    </div>
+</div>
+
+<div class="footer">
+    <p>📊 BTC 筑底信号监控系统 · 韩立制作</p>
+    <p>文档生成时间：2026-08-23 · 请勿用于商业用途</p>
+</div>
+
+</div>
+
+</body>
+</html>

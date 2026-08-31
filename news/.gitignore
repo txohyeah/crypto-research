@@ -1,0 +1,14 @@
+# secrets —— 绝不入库
+.env
+
+# 运行数据
+data/
+out/
+*.db
+*.db-wal
+*.db-shm
+
+# python
+__pycache__/
+*.pyc
+.venv/
