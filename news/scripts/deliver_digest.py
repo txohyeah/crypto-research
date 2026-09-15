@@ -71,7 +71,23 @@ def main() -> None:
             print("  -", e, file=sys.stderr)
         sys.exit(2)
 
-    run_date = digest["date"]
+    # 幂等锚点用「实际运行日」，与 collect.py 保持同一口径。
+    # 原实现写的是 run_date = digest["date"]，但 digest["date"] 是**由 LLM 填的**内容
+    # 日期（cron prompt 里写着"date=今天YYYY-MM-DD"，见 qwenpaw 定时任务文本）——
+    # 把幂等这种正确性关键的判断押在模型输出上：它某天把日期填成昨天，读写的就是
+    # **另一天**的 runs 行，两种后果都不轻：
+    #   · 那天已是 delivered → 今天被静默跳过，用户当天收不到推送（无声漏推）；
+    #   · 那天未 delivered   → 今天这次被记进历史那天，今天的行永远停在 collected，
+    #                          次日再跑会重复推送。
+    # 历史数据（08-26~08-31）各行日期恰好都填对了，所以此前没暴露 —— 属于运气。
+    run_date = datetime.now(SH_TZ).strftime("%Y-%m-%d")
+    digest_date = digest.get("date")
+    if digest_date != run_date:
+        print(
+            f"[warn] digest.date={digest_date} 与运行日 {run_date} 不一致；"
+            f"幂等锚点取运行日，digest.date 仅作内容日期（见 stats.digest_date）",
+            file=sys.stderr,
+        )
     conn = get_conn()
     row = conn.execute("SELECT state FROM runs WHERE date=?", (run_date,)).fetchone()
     if row and row["state"] == "delivered":
@@ -96,7 +112,8 @@ def main() -> None:
                VALUES(?, 'feishu_file', 'delivered', '', ?)""",
             (run_date, int(time.time())))
         mark(conn, run_date, "delivered",
-             stats={"pushed": len(digest.get("major") or []) + len(digest.get("opps") or [])})
+             stats={"pushed": len(digest.get("major") or []) + len(digest.get("opps") or []),
+                    "digest_date": digest_date})
         print(f"[done] {run_date} state=delivered，push_log 已记账")
     except Exception as ex:  # 失败落账：三周后翻 runs.errors 能查到原因
         mark(conn, run_date, "failed", errors={"deliver": str(ex)[:300]})
