@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .exceptions import ReportWriteError
-from .models import StrategyEvaluation
+from tech_indicators.models import StrategyEvaluation
 from tech_indicators.strategies import Strategy
 
 

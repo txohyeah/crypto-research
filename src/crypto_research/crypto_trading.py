@@ -18,10 +18,12 @@ from .crypto import (
 )
 from .crypto_signals import GOLDEN_BULL_SIGNAL_NAME, GOLDEN_BULL_SIGNAL_VERSION
 from .exceptions import DataInsufficientError, ReportWriteError, UserInputError
-from .golden_bull_trading import BEAR_TRIAL_TARGET_POSITION_PCT
+# 金牛通道那套（通道计划 / 复燃点 / 统一 K 线决策）统一由 tech-indicators 提供，
+# 本仓不再保留副本（2026-09-15 收敛，避免同一策略两处实现、修一处漏一处）。
+from tech_indicators.golden_bull_trading import BEAR_TRIAL_TARGET_POSITION_PCT
 from tech_indicators.indicators import compute_golden_bull_lines
-from .kline_decision import build_unified_kline_trade_plan
-from .reburn import (
+from tech_indicators.kline_decision import build_unified_kline_trade_plan
+from tech_indicators.reburn import (
     REBURN_MA_SLOPE_LOOKBACK_BARS,
     REBURN_RISK_CAP_POSITION_PCT,
     REBURN_STRONG_TARGET_POSITION_PCT,

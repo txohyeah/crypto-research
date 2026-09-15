@@ -16,7 +16,7 @@ from tech_indicators.chart import build_chart_frame, build_reburn_markers, parse
 from .config import Settings, load_settings
 from .exceptions import DataInsufficientError, DatabaseConnectionError, ReportWriteError, UserInputError
 from tech_indicators.indicators import compute_indicators
-from .models import StrategyEvaluation
+from tech_indicators.models import StrategyEvaluation
 from .report import render_markdown_report
 from tech_indicators.strategies import RuleEvaluator, get_strategy
 
