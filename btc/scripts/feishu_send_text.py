@@ -14,15 +14,32 @@ import requests
 from pathlib import Path
 
 
+def _load_env_file() -> dict:
+    """读取仓库根目录 `.env`（.gitignore 已排除，不入库），与 feishu_send_file.py 同口径。"""
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    values: dict[str, str] = {}
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return values
+
+
 def get_feishu_config():
-    """读取飞书配置：环境变量优先，回退 ~/.qwenpaw/config.json
+    """读取飞书配置：环境变量 > 仓库根 .env > ~/.qwenpaw/config.json
 
     环境变量: FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_OPEN_ID
     Returns: (app_id, app_secret, default_open_id)，缺失项为 None
     """
-    app_id = os.environ.get('FEISHU_APP_ID')
-    app_secret = os.environ.get('FEISHU_APP_SECRET')
-    open_id = os.environ.get('FEISHU_OPEN_ID')
+    env_file = _load_env_file()
+    app_id = os.environ.get('FEISHU_APP_ID') or env_file.get('FEISHU_APP_ID')
+    app_secret = os.environ.get('FEISHU_APP_SECRET') or env_file.get('FEISHU_APP_SECRET')
+    open_id = os.environ.get('FEISHU_OPEN_ID') or env_file.get('FEISHU_OPEN_ID')
     if not (app_id and app_secret):
         config_path = Path.home() / '.qwenpaw' / 'config.json'
         with open(config_path) as f:
