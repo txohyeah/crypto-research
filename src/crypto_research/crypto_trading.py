@@ -160,9 +160,6 @@ class AccountState:
     entry_high_price: float | None = None
     entry_candle_low_price: float | None = None
     position_lots: list[PositionLot] = field(default_factory=list)
-    take_profit_reduced: bool = False
-    take_profit_reduce_bars_since: int | None = None
-    last_take_profit_reduce_open_time_ms: int | None = None
 
     @classmethod
     def fresh(cls, initial_capital: float) -> "AccountState":
@@ -185,13 +182,6 @@ class AccountState:
             entry_high_price=_optional_float(snapshot.get("entry_high_price")),
             entry_candle_low_price=_optional_float(snapshot.get("entry_candle_low_price")),
             position_lots=_position_lots_from_snapshot(snapshot),
-            take_profit_reduced=bool(snapshot.get("take_profit_reduced")),
-            take_profit_reduce_bars_since=_optional_int(snapshot.get("take_profit_reduce_bars_since")),
-            last_take_profit_reduce_open_time_ms=(
-                int(snapshot["last_take_profit_reduce_open_time_ms"])
-                if snapshot.get("last_take_profit_reduce_open_time_ms") is not None
-                else None
-            ),
         )
 
 
@@ -399,7 +389,6 @@ def _run_engine(
     avg_abs_return_10_by_open_time = _avg_abs_return_10_by_open_time(frame)
     for idx in range(start_index, len(frame)):
         row = frame.iloc[idx]
-        _advance_take_profit_reduce_clock(state)
         price = float(row["close"])
         _update_entry_high_price(state, row)
         rating = _current_rating(
@@ -892,7 +881,6 @@ def _target_from_rating(
         timeframe_label="4h",
         stop_line_name=state.stop_line_name,
         stop_line_price=state.stop_line_price,
-        take_profit_reduced=_take_profit_reduce_blocked(state),
         entry_price=state.entry_price,
         entry_high_price=state.entry_high_price,
         take_profit_entry_price=_latest_take_profit_entry_price(state),
@@ -1389,19 +1377,9 @@ def _rebalance(
         state.stop_line_name = trade_plan.get("stop_line_name") or state.stop_line_name
         state.stop_line_price = _optional_float(trade_plan.get("stop_line_price")) or state.stop_line_price
         state.entry_signal_type = trade_plan.get("signal_type") or state.entry_signal_type
-        state.take_profit_reduced = False
-        state.take_profit_reduce_bars_since = None
-        state.last_take_profit_reduce_open_time_ms = None
     elif side == "sell":
         _consume_position_lots(state, qty)
         _refresh_entry_price_from_lots(state)
-    if side == "sell" and trade_plan and trade_plan.get("signal_type") in {
-        "bull_take_profit_reduce",
-        "bear_upper_bearish_sell",
-    }:
-        state.take_profit_reduced = True
-        state.take_profit_reduce_bars_since = 0
-        state.last_take_profit_reduce_open_time_ms = int(row["open_time_ms"])
     if state.base_qty <= 1e-12:
         state.base_qty = 0.0
         state.stop_line_name = None
@@ -1411,9 +1389,6 @@ def _rebalance(
         state.entry_high_price = None
         state.entry_candle_low_price = None
         state.position_lots = []
-        state.take_profit_reduced = False
-        state.take_profit_reduce_bars_since = None
-        state.last_take_profit_reduce_open_time_ms = None
         if action in {"sell_clear", "profit_trailing_stop"}:
             state.phase = "exit_locked"
     equity_after = _equity(state, price)
@@ -1473,9 +1448,6 @@ def _rebalance(
         "add_on_stop_target_position_pct": _round(trade_add_on_stop_target_position_pct, 6),
         "position_lots": [lot.to_dict() for lot in state.position_lots],
         "position_lots_before": position_lots_before,
-        "take_profit_reduced": state.take_profit_reduced,
-        "take_profit_reduce_bars_since": state.take_profit_reduce_bars_since,
-        "last_take_profit_reduce_open_time_ms": state.last_take_profit_reduce_open_time_ms,
     }
 
 
@@ -1564,9 +1536,6 @@ def _snapshot(row: pd.Series, state: AccountState, config: CryptoTradingConfig, 
         "add_on_entry_low_price": _round(_latest_add_on_entry_low_price(state)),
         "add_on_stop_target_position_pct": _round(_latest_add_on_stop_target_position_pct(state), 6),
         "position_lots": [lot.to_dict() for lot in state.position_lots],
-        "take_profit_reduced": state.take_profit_reduced,
-        "take_profit_reduce_bars_since": state.take_profit_reduce_bars_since,
-        "last_take_profit_reduce_open_time_ms": state.last_take_profit_reduce_open_time_ms,
     }
 
 
@@ -1613,9 +1582,6 @@ def _decision(
             "equity_high_watermark": snapshot["equity_high_watermark"],
             "profit_high_watermark": snapshot["profit_high_watermark"],
             "profit_trailing_stop_equity": snapshot["profit_trailing_stop_equity"],
-            "take_profit_reduced": snapshot["take_profit_reduced"],
-            "take_profit_reduce_bars_since": snapshot["take_profit_reduce_bars_since"],
-            "last_take_profit_reduce_open_time_ms": snapshot["last_take_profit_reduce_open_time_ms"],
             "entry_price": snapshot["entry_price"],
             "entry_high_price": snapshot["entry_high_price"],
             "entry_peak_gain_pct": snapshot["entry_peak_gain_pct"],
@@ -1692,19 +1658,6 @@ def _refresh_entry_price_from_lots(state: AccountState) -> None:
         return
     total_cost = sum(lot.qty * lot.entry_price for lot in state.position_lots if lot.qty > 1e-12)
     state.entry_price = total_cost / total_qty
-
-
-def _advance_take_profit_reduce_clock(state: AccountState) -> None:
-    if not state.take_profit_reduced:
-        return
-    if state.take_profit_reduce_bars_since is None:
-        state.take_profit_reduce_bars_since = 0
-        return
-    state.take_profit_reduce_bars_since += 1
-
-
-def _take_profit_reduce_blocked(state: AccountState) -> bool:
-    return bool(state.take_profit_reduced)
 
 
 def _update_entry_high_price(state: AccountState, row: pd.Series) -> None:
