@@ -883,8 +883,6 @@ def _target_from_rating(
         stop_line_price=state.stop_line_price,
         entry_price=state.entry_price,
         entry_high_price=state.entry_high_price,
-        take_profit_entry_price=_latest_take_profit_entry_price(state),
-        take_profit_entry_high_price=_latest_take_profit_entry_high_price(state),
         entry_candle_low_price=state.entry_candle_low_price,
         add_on_entry_low_price=_latest_add_on_entry_low_price(state),
         add_on_stop_target_position_pct=_latest_add_on_stop_target_position_pct(state),
@@ -1616,16 +1614,6 @@ def _latest_add_on_lot(state: AccountState) -> PositionLot | None:
 def _latest_active_lot(state: AccountState) -> PositionLot | None:
     active_lots = [lot for lot in state.position_lots if lot.qty > 1e-12]
     return active_lots[-1] if active_lots else None
-
-
-def _latest_take_profit_entry_price(state: AccountState) -> float | None:
-    lot = _latest_active_lot(state)
-    return lot.entry_price if lot else state.entry_price
-
-
-def _latest_take_profit_entry_high_price(state: AccountState) -> float | None:
-    lot = _latest_active_lot(state)
-    return lot.entry_high_price if lot else state.entry_high_price
 
 
 def _latest_add_on_entry_low_price(state: AccountState) -> float | None:
