@@ -210,6 +210,37 @@ def collect_binance_spot_klines(days: int = 400) -> dict:
             "count": len(out), "latest": latest, "data": out}
 
 
+def collect_mvrv_coinmetrics(days: int = 400) -> dict:
+    """从 CoinMetrics Community API 获取 MVRV（CapMVRVCur，免费无 key）。
+
+    2026-09-13 验证恢复可用（此前 2026-08-23 退役）；bitcoin-data.com 免费档
+    延迟 7 天（9/13 请求仍只返回到 9/6），故切回 CoinMetrics 为主源。
+    返回格式同 collect_mvrv_bitcoindata：{"status","count","data":[{"date","mvrv"}]}
+    """
+    start = (datetime.now() - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    url = (
+        f"https://community-api.coinmetrics.io/v4/timeseries/asset-metrics"
+        f"?assets=btc&metrics=CapMVRVCur&frequency=1d"
+        f"&start_time={start}&page_size=10000"
+    )
+    data = fetch_json(url)
+    if "error" in data:
+        return {"source": "coinmetrics", "status": "error", "message": data["error"]}
+    records = data.get("data", [])
+    if not records:
+        return {"source": "coinmetrics", "status": "no_data", "message": "无数据"}
+    result = []
+    for rec in records:
+        try:
+            d = rec["time"][:10]
+            mvrv = float(rec["CapMVRVCur"])
+            result.append({"date": d, "mvrv": mvrv})
+        except (KeyError, ValueError, TypeError):
+            continue
+    result.sort(key=lambda x: x["date"])
+    return {"source": "coinmetrics", "status": "ok", "count": len(result), "data": result}
+
+
 def collect_mvrv_bitcoindata(days: int = 400) -> dict:
     """
     从 bitcoin-data.com 获取 MVRV（免费无 key，替代 CoinMetrics CapMVRVCur）

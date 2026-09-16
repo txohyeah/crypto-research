@@ -17,17 +17,41 @@
 import json
 import sys
 import os
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 # 添加脚本目录到路径
 sys.path.insert(0, str(Path(__file__).parent))
 from btc_monitor_db import (
-    init_db, upsert_daily_metrics, log_collect,
+    init_db, upsert_daily_metrics, log_collect, get_conn,
     check_checklist, update_checklist_status, get_recent_metrics,
     update_auto_support, check_top_checklist, update_top_checklist_status
 )
-from btc_collector import collect_fear_greed, collect_binance, collect_binance_spot_klines, collect_mvrv_bitcoindata, collect_all_top_indicators
+from btc_collector import collect_fear_greed, collect_binance, collect_binance_spot_klines, collect_mvrv_bitcoindata, collect_mvrv_coinmetrics, collect_all_top_indicators
+
+
+def _push_state_path() -> Path:
+    """当日飞书推送幂等状态文件（防止同日重复推送）。"""
+    return Path(__file__).parent.parent / "reports" / ".feishu_push_state.json"
+
+
+def _already_pushed_today(target_date: str) -> bool:
+    try:
+        p = _push_state_path()
+        if p.exists():
+            return json.loads(p.read_text()).get("last_push_date") == target_date
+    except Exception:
+        pass
+    return False
+
+
+def _mark_pushed_today(target_date: str) -> None:
+    try:
+        p = _push_state_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps({"last_push_date": target_date}))
+    except Exception:
+        pass
 
 
 def collect_etf_via_tavily(target_date: str) -> dict:
@@ -226,6 +250,9 @@ def main():
     parser.add_argument("--report", action="store_true", help="生成每日报告")
     parser.add_argument("--no-chart", action="store_true", help="不生成 ETF 图表")
     parser.add_argument("--no-feishu", action="store_true", help="不推送到飞书")
+    parser.add_argument("--force-push", action="store_true", help="即使当日已推送过也强制重推")
+    parser.add_argument("--push-note", default=None,
+                        help="重发/特殊推送时的说明，会作为一条文本先于报告发出（解释为什么重发）")
     parser.add_argument("--output-dir", default=str(Path(__file__).parent.parent / "reports"),
                         help="报告输出目录")
     
@@ -265,17 +292,46 @@ def main():
         log_collect("binance_spot_klines", "error", str(e))
 
     # 1.6 MVRV（bitcoin-data.com 替代 CoinMetrics；全量回填，幂等，T+1 出数）
+    # 限流友好：与 1.7 共享免费档 10 请求/小时配额（2026-09-12 曾因高频重跑把配额打爆，
+    # MVRV 连续 4 天缺数），故 DB 已有昨日值时跳过本次请求，把配额留给 1.7。
     print("📡 [1.6/4] MVRV（bitcoin-data.com）...")
     try:
-        r16 = collect_mvrv_bitcoindata()
-        log_collect("bitcoindata_mvrv", r16["status"], r16.get("message", ""))
-        if r16["status"] == "ok":
-            for row in r16["data"]:
-                upsert_daily_metrics({"date": row["date"], "mvrv": row["mvrv"]})
-            mv = r16["data"][-1]
-            print(f"   ✅ 覆盖 {r16['count']} 天（最新 {mv['date']}: MVRV {mv['mvrv']:.4f}）")
+        _mvrv_skip = False
+        try:
+            _latest_mvrv = get_conn().execute(
+                "SELECT MAX(date) FROM daily_metrics WHERE mvrv IS NOT NULL").fetchone()[0]
+            if _latest_mvrv:
+                _yday = (date.today() - timedelta(days=1)).isoformat()
+                if _latest_mvrv >= _yday:
+                    _mvrv_skip = True
+                    print(f"   ⏭️ DB 已有 {_latest_mvrv} 的 MVRV（T+1 出数已达标），跳过请求省配额")
+        except Exception:
+            pass  # 判断失败则照常请求
+        if _mvrv_skip:
+            log_collect("coinmetrics_mvrv", "skipped", "DB 已是最新，跳过省配额")
+            # 顶部 KPI 需要最近可用值（T+1 源导致今天行恒为 None，取 DB 最近一条）
+            _row = get_conn().execute(
+                "SELECT mvrv FROM daily_metrics WHERE mvrv IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+            if _row:
+                metrics.update({"mvrv": _row[0]})
         else:
-            print(f"   ⚠️ {r16.get('message')}")
+            # 主源 CoinMetrics（2026-09-13 恢复；bitcoin-data.com 免费档延迟 7 天）
+            r16 = collect_mvrv_coinmetrics()
+            if r16["status"] != "ok":
+                print(f"   ⚠️ CoinMetrics: {r16.get('message')}，回退 bitcoin-data.com")
+                log_collect("coinmetrics_mvrv", r16["status"], r16.get("message", ""))
+                r16 = collect_mvrv_bitcoindata()
+                log_collect("bitcoindata_mvrv", r16["status"], r16.get("message", ""))
+            else:
+                log_collect("coinmetrics_mvrv", r16["status"], r16.get("message", ""))
+            if r16["status"] == "ok":
+                for row in r16["data"]:
+                    upsert_daily_metrics({"date": row["date"], "mvrv": row["mvrv"]})
+                mv = r16["data"][-1]
+                metrics.update({"mvrv": mv["mvrv"]})  # 顶部 KPI 用最近可用值
+                print(f"   ✅ 覆盖 {r16['count']} 天（最新 {mv['date']}: MVRV {mv['mvrv']:.4f}）")
+            else:
+                print(f"   ⚠️ {r16.get('message')}")
     except Exception as e:
         print(f"   ❌ 异常: {e}")
         log_collect("bitcoindata_mvrv", "error", str(e))
@@ -516,26 +572,40 @@ def main():
         
         print(f"   ✅ 报告已保存: {report_path}")
     
-    # 飞书推送 HTML 报告
+    # 飞书推送 HTML 报告（ETF 数据缺失时跳过推送，避免推送残缺版）
     if html_path and not args.no_feishu:
-        try:
-            from feishu_send_file import get_feishu_config, get_tenant_token, upload_file, send_file_message
-            print(f"\n📱 推送到飞书...")
-            app_id, app_secret, open_id = get_feishu_config()
-            if not open_id:
-                raise Exception("未指定接收人: 请设置环境变量 FEISHU_OPEN_ID 或在 config 中配置 open_id")
-            token = get_tenant_token(app_id, app_secret)
-            file_key, file_type = upload_file(token, html_path)
-            send_file_message(token, open_id, file_key, file_type)
-            print(f"   ✅ 飞书推送完成")
-            
-            # 推送文本摘要
-            from feishu_send_text import send_text_message
-            summary = generate_daily_report(target_date, metrics, checklist)
-            send_text_message(token, open_id, summary)
-            print(f"   ✅ 文本摘要已推送")
-        except Exception as e:
-            print(f"   ⚠️ 飞书推送失败: {e}")
+        if metrics.get("etf_net_flow_m") is None:
+            print(f"\n📱 跳过飞书推送: ETF 数据缺失（需先补采 --etf-flow/--etf-aum 再推送）")
+        elif _already_pushed_today(target_date) and not args.force_push:
+            print(f"\n📱 跳过飞书推送: {target_date} 已推送过（幂等跳过；如需重推加 --force-push）")
+        else:
+            try:
+                from feishu_send_file import get_feishu_config, get_tenant_token, upload_file, send_file_message
+                from feishu_send_text import send_text_message
+                print(f"\n📱 推送到飞书...")
+                app_id, app_secret, open_id = get_feishu_config()
+                if not open_id:
+                    raise Exception("未指定接收人: 请设置环境变量 FEISHU_OPEN_ID 或在 config 中配置 open_id")
+                token = get_tenant_token(app_id, app_secret)
+                # 重发场景：若当日已推过，先发改说明，让接收方知道为何又来一份
+                if _already_pushed_today(target_date):
+                    if args.push_note:
+                        send_text_message(token, open_id, f"📌 重发说明（{target_date}）：{args.push_note}")
+                        print(f"   ✅ 重发说明已发送")
+                    else:
+                        send_text_message(token, open_id, f"📌 提示：{target_date} 的报告为重新推送（未附说明）。")
+                        print(f"   ⚠️ 当日重推但未加 --push-note，已发默认提示")
+                file_key, file_type = upload_file(token, html_path)
+                send_file_message(token, open_id, file_key, file_type)
+                print(f"   ✅ 飞书推送完成")
+                
+                # 推送文本摘要
+                summary = generate_daily_report(target_date, metrics, checklist)
+                send_text_message(token, open_id, summary)
+                print(f"   ✅ 文本摘要已推送")
+                _mark_pushed_today(target_date)
+            except Exception as e:
+                print(f"   ⚠️ 飞书推送失败: {e}")
     
     print(f"\n{'='*50}")
     print(f"✅ 采集完成: {target_date}")
