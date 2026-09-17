@@ -163,9 +163,16 @@ def generate_daily_report(target_date: str, metrics: dict, checklist: dict) -> s
             total = d.get('total_trading_days', 20)
             value = f"{value}/{total}天"
         elif key == '4_spot_perp':
-            value = f"{value}天"
-        elif key == '5_second_test' and isinstance(value, float):
-            value = f"${value:,.0f}"
+            # 与 HTML 报告同口径：details 里没有 value 键，通用取键会回落成 '-天'
+            value = f"累计 {d.get('cumulative_30d', 0):.4f} / 7日均值 {d.get('avg_7d', 0):.6f}"
+            target = '>0 且 >0'
+        elif key == '5_second_test':
+            # 与 HTML 报告同口径：前低 + 来源 + 锚定日期（原通用取键只会得到 '-'）
+            if d.get('support_level'):
+                _src = {'manual': '人工', 'auto': '自动'}.get(
+                    d.get('support_source'), d.get('support_source', '?'))
+                value = f"前低 ${d['support_level']:,.0f} ({_src}·锚定{d.get('support_anchor', '-')})"
+            target = '回踩不破前低'
         
         report += f"| {key.split('_')[0]} | {name} | {value} | {target} | {status} |\n"
     
