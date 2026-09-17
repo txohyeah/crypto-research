@@ -40,6 +40,16 @@ def get_latest_metrics(recent: list) -> dict:
     return metrics
 
 
+def _mvrv_display(checklist: dict) -> str:
+    """MVRV 值 + 数据日期（T+1 源可能滞后，旧值须标 as_of，避免被误读为当日值）"""
+    d = checklist.get('details', {}).get('1_mvrv', {})
+    v = d.get('value')
+    if v is None:
+        return '-'
+    as_of = d.get('as_of') or ''
+    return f"{v:.4f} ({as_of[5:].replace('-', '/')})" if as_of else f"{v:.4f}"
+
+
 def _second_test_display(checklist: dict) -> str:
     """二次探底信号值展示：动态前低 + 来源 + 锚定日期"""
     d = checklist.get('details', {}).get('5_second_test', {})
@@ -57,7 +67,7 @@ def build_template_data(target_date, chart_paths: dict) -> dict:
 
     # ---- 筑底清单 ----
     signal_map = [
-        ('1_mvrv',       'MVRV 回落 1.0-1.2',  lambda: f'{latest["mvrv"]:.4f}' if latest.get('mvrv') else '-', '1.0-1.2'),
+        ('1_mvrv',       'MVRV 回落 1.0-1.2',  lambda: _mvrv_display(checklist), '1.0-1.2'),
         ('2_fear_greed', '恐惧贪婪 <15',        lambda: str(latest.get('fear_greed_value') or '-'), '<15'),
         ('3_etf_inflow', 'ETF 流入 ≥14/20 天',   lambda: f'{checklist["details"].get("3_etf_inflow", {}).get("inflow_days", 0)}/20', '≥14/20'),
         ('4_spot_perp',  '现货需求 30天累计+7日均值',   lambda: f'累计 {checklist["details"].get("4_spot_perp", {}).get("cumulative_30d", 0):.4f} / 7日均值 {checklist["details"].get("4_spot_perp", {}).get("avg_7d", 0):.6f}', '>0 且 >0'),

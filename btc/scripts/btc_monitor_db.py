@@ -139,11 +139,17 @@ def upsert_daily_metrics(data: dict):
     conn = get_conn()
     cursor = conn.cursor()
 
+    # MVRV 合理性防护：0 / 负值 / 异常大值一律按缺失处理（2026-09-13 曾被写入 0.0，
+    # 且 0.0 非 NULL 会参与"MAX(date) WHERE mvrv IS NOT NULL"达标判据）
+    _mvrv = data.get("mvrv")
+    if _mvrv is not None and not (0 < _mvrv < 100):
+        _mvrv = None
+
     # 确保所有字段都有值（None 用于缺失数据）
     fields = {
         "date": data["date"],
         "price_usd": data.get("price_usd"),
-        "mvrv": data.get("mvrv"),
+        "mvrv": _mvrv,
         "fear_greed_value": data.get("fear_greed_value"),
         "fear_greed_label": data.get("fear_greed_label"),
         "etf_net_flow_m": data.get("etf_net_flow_m"),

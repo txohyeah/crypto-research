@@ -93,7 +93,12 @@ def generate_daily_report(target_date: str, metrics: dict, checklist: dict) -> s
     """生成每日报告 Markdown"""
     
     price_str = f"${metrics['price_usd']:,.2f}" if metrics.get('price_usd') is not None else '-'
-    mvrv_str = f"{metrics['mvrv']:.4f}" if metrics.get('mvrv') is not None else '-'
+    # MVRV 是 T+1 源、且可能滞后：展示值必须带 as_of 日期，否则旧值会被误读成当日值
+    if metrics.get('mvrv') is not None:
+        _mvrv_asof = metrics.get('_mvrv_asof')
+        mvrv_str = f"{metrics['mvrv']:.4f}" + (f" ({_mvrv_asof[5:].replace('-', '/')})" if _mvrv_asof else "")
+    else:
+        mvrv_str = '-'
     fg_str = f"{metrics.get('fear_greed_value', '-')} ({metrics.get('fear_greed_label', '-')})"
     fr_str = f"{metrics['funding_rate']:.6f}" if metrics.get('funding_rate') is not None else '-'
     oi_str = f"{metrics['open_interest']:,.2f} BTC" if metrics.get('open_interest') is not None else '-'
@@ -149,7 +154,9 @@ def generate_daily_report(target_date: str, metrics: dict, checklist: dict) -> s
         
         # 格式化值
         if key == '1_mvrv' and isinstance(value, float):
-            value = f"{value:.4f}"
+            # 带数据日期（MVRV 为 T+1 源且可能滞后，不带日期会把旧值误读成当日值）
+            _mvrv_asof = d.get('as_of') or ''
+            value = f"{value:.4f}" + (f" ({_mvrv_asof[5:].replace('-', '/')})" if _mvrv_asof else "")
         elif key == '2_fear_greed' and isinstance(value, int):
             value = f"{value}"
         elif key == '3_etf_inflow':
@@ -297,23 +304,36 @@ def main():
     print("📡 [1.6/4] MVRV（bitcoin-data.com）...")
     try:
         _mvrv_skip = False
+        _skip_reason = ""
         try:
-            _latest_mvrv = get_conn().execute(
-                "SELECT MAX(date) FROM daily_metrics WHERE mvrv IS NOT NULL").fetchone()[0]
-            if _latest_mvrv:
+            # 省配额判据（2026-09-17 重构）。旧版只看"DB 已有昨日值"，会被复制值自锁：
+            # 兜底旧值被写进当天行 → 次日判据即误判达标 → 永不请求（MVRV 冻结 9/12~9/17）。
+            # 现改为：1) 今日已成功取过数 → 同日重跑不再请求（这才是"省配额"的本意）
+            #        2) DB 已有昨日及更新的真实值（mvrv > 0）→ 无需请求
+            _today_ok = get_conn().execute(
+                "SELECT COUNT(*) FROM collect_log WHERE date = ? "
+                "AND source IN ('coinmetrics_mvrv', 'bitcoindata_mvrv') AND status = 'ok'",
+                (date.today().isoformat(),)).fetchone()[0]
+            if _today_ok:
+                _mvrv_skip, _skip_reason = True, f"今日已成功取数 {_today_ok} 次，同日重跑省配额"
+            else:
+                _latest_mvrv = get_conn().execute(
+                    "SELECT MAX(date) FROM daily_metrics WHERE mvrv IS NOT NULL AND mvrv > 0").fetchone()[0]
                 _yday = (date.today() - timedelta(days=1)).isoformat()
-                if _latest_mvrv >= _yday:
-                    _mvrv_skip = True
-                    print(f"   ⏭️ DB 已有 {_latest_mvrv} 的 MVRV（T+1 出数已达标），跳过请求省配额")
+                if _latest_mvrv and _latest_mvrv >= _yday:
+                    _mvrv_skip, _skip_reason = True, f"DB 已有 {_latest_mvrv} 的 MVRV（T+1 出数已达标）"
         except Exception:
             pass  # 判断失败则照常请求
         if _mvrv_skip:
-            log_collect("coinmetrics_mvrv", "skipped", "DB 已是最新，跳过省配额")
-            # 顶部 KPI 需要最近可用值（T+1 源导致今天行恒为 None，取 DB 最近一条）
+            print(f"   ⏭️ {_skip_reason}，跳过请求")
+            log_collect("coinmetrics_mvrv", "skipped", _skip_reason)
+            # 顶部 KPI 需要最近可用值（T+1 源导致今天行恒为 None，取 DB 最近一条真实值）。
+            # 只用于展示，并记录 as_of 日期；写库时会被剔除，绝不写进当天行。
             _row = get_conn().execute(
-                "SELECT mvrv FROM daily_metrics WHERE mvrv IS NOT NULL ORDER BY date DESC LIMIT 1").fetchone()
+                "SELECT date, mvrv FROM daily_metrics WHERE mvrv IS NOT NULL AND mvrv > 0 "
+                "ORDER BY date DESC LIMIT 1").fetchone()
             if _row:
-                metrics.update({"mvrv": _row[0]})
+                metrics.update({"mvrv": _row[1], "_mvrv_asof": _row[0]})
         else:
             # 主源 CoinMetrics（2026-09-13 恢复；bitcoin-data.com 免费档延迟 7 天）
             r16 = collect_mvrv_coinmetrics()
@@ -325,11 +345,14 @@ def main():
             else:
                 log_collect("coinmetrics_mvrv", r16["status"], r16.get("message", ""))
             if r16["status"] == "ok":
-                for row in r16["data"]:
+                # 只落库真实行（mvrv > 0）；展示值另存 _mvrv_asof，绝不写进当天行
+                _rows = [r for r in r16["data"] if r.get("mvrv") and r["mvrv"] > 0]
+                for row in _rows:
                     upsert_daily_metrics({"date": row["date"], "mvrv": row["mvrv"]})
-                mv = r16["data"][-1]
-                metrics.update({"mvrv": mv["mvrv"]})  # 顶部 KPI 用最近可用值
-                print(f"   ✅ 覆盖 {r16['count']} 天（最新 {mv['date']}: MVRV {mv['mvrv']:.4f}）")
+                if _rows:
+                    mv = _rows[-1]
+                    metrics.update({"mvrv": mv["mvrv"], "_mvrv_asof": mv["date"]})  # 顶部 KPI 用最近可用值
+                    print(f"   ✅ 覆盖 {len(_rows)} 天（最新 {mv['date']}: MVRV {mv['mvrv']:.4f}）")
             else:
                 print(f"   ⚠️ {r16.get('message')}")
     except Exception as e:
@@ -442,7 +465,13 @@ def main():
     
     # 写入数据库
     print("\n💾 写入数据库...")
-    upsert_daily_metrics(metrics)
+    _db_payload = {k: v for k, v in metrics.items() if not k.startswith("_")}
+    # MVRV 是 T+1 源：真实值已在 1.6 段按各自日期逐行 upsert，这里必须剔除，
+    # 否则 metrics['mvrv']（= 最近可用值，常为昨天的数）会被写进"当天行"，
+    # 次日跳过判据 MAX(date) WHERE mvrv IS NOT NULL 即误判"已达标"→ 永不请求、
+    # 旧值天天复制（2026-09-12 起实际发生的自锁冻结）。
+    _db_payload.pop("mvrv", None)
+    upsert_daily_metrics(_db_payload)
     print("   ✅ daily_metrics 已更新")
     
     # 重算自动前低（二次探底信号用，manual 设置优先不受影响）
