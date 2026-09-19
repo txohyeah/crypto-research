@@ -46,6 +46,7 @@ cd news && python3 scripts/collect.py
 |------|------|------|
 | crypto 4h 同步 | 每天 00/04/08/12/16/20 点 +5 分（系统 crontab） | `scripts/crypto_sync.sh 4h` |
 | crypto 1d 同步 | 每天 08:05（系统 crontab） | `scripts/crypto_sync.sh 1d` |
+| 实时价快照 | 每 10 分钟（系统 crontab） | `scripts/price_snapshot.py` → `crypto.db price_spot`（三源兜底 CoinGecko→Binance→OKX，每行记实际供给源，保留 365 天） |
 | Web3 早报 | 每天 08:00（QwenPaw cron） | `news/`（cd 后执行流水线） |
 | BTC 采集+报告 | 每天 08:10（QwenPaw cron） | `btc/scripts/btc_daily_collect.py --report` |
 
