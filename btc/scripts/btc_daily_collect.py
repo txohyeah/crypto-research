@@ -119,8 +119,8 @@ def generate_daily_report(target_date: str, metrics: dict, checklist: dict) -> s
 | **BTC 价格** | {price_str} | - |
 | **MVRV** | {mvrv_str} | {'✅ 1.0-1.2' if metrics.get('mvrv') and 1.0 <= metrics['mvrv'] <= 1.2 else '❌ 目标 1.0-1.2'} |
 | **恐惧贪婪指数** | {fg_str} | {'✅ <15' if metrics.get('fear_greed_value') and metrics['fear_greed_value'] < 15 else '❌ 目标 <15'} |
-| **ETF 单日净流入** | {'$' + str(round(metrics['etf_net_flow_m'], 1)) + 'M' if metrics.get('etf_net_flow_m') is not None else '待补充'} | - |
-| **ETF 总 AUM** | {'$' + str(round(metrics['etf_total_aum_b'], 2)) + 'B' if metrics.get('etf_total_aum_b') is not None else '待补充'} | - |
+| **ETF 单日净流入** | {'$' + str(round(metrics['_etf_display_flow'], 1)) + 'M' + (f"（{metrics.get('_etf_asof', '')}）" if metrics.get('_etf_asof') and metrics.get('_etf_asof') != target_date else '') if metrics.get('_etf_display_flow') is not None else '待补充'} | - |
+| **ETF 总 AUM** | {'$' + str(round(metrics['_etf_display_aum'], 2)) + 'B' if metrics.get('_etf_display_aum') is not None else '待补充'} | - |
 | **资金费率** | {fr_str} | {'✅ >0' if metrics.get('funding_rate') and metrics['funding_rate'] > 0 else '❌ 目标 >0'} |
 | **未平仓量** | {oi_str} | - |
 | **交易所流入** | {flow_in_str} | - |
@@ -261,6 +261,13 @@ def main():
                         help="采集日期 (YYYY-MM-DD)，默认今天")
     parser.add_argument("--etf-flow", type=float, help="ETF 单日净流入（百万美元）")
     parser.add_argument("--etf-aum", type=float, help="ETF 总资产净值（十亿美元）")
+    parser.add_argument("--etf-date", default=None,
+                        help="ETF 数据归属交易日 (YYYY-MM-DD)。Farside 每天早上发布的是前一交易日数据，"
+                             "记到采集日名下会造成整体右移（2026-09-20 确诊的 off-by-one），补采时必须指定")
+    parser.add_argument("--etf-refresh-file", default=None,
+                        help="按真实交易日批量回刷 ETF 的 JSON 文件。格式: "
+                             '{"2026-09-18": {"flow": 433.0, "aum": 102.0}, "2026-09-19": null}，'
+                             "值为 null 表示清除该日期的 ETF 字段（用于清理错位行）")
     parser.add_argument("--report", action="store_true", help="生成每日报告")
     parser.add_argument("--no-chart", action="store_true", help="不生成 ETF 图表")
     parser.add_argument("--no-feishu", action="store_true", help="不推送到飞书")
@@ -458,17 +465,95 @@ def main():
     
     # 4. ETF（外部传入或提示需要 Agent）
     print("📡 [4/4] ETF 数据...")
-    if args.etf_flow is not None or args.etf_aum is not None:
-        metrics["etf_net_flow_m"] = args.etf_flow
-        metrics["etf_total_aum_b"] = args.etf_aum
-        print(f"   ✅ 净流入=${args.etf_flow}M, AUM=${args.etf_aum}B")
-        log_collect("etf", "ok", f"flow={args.etf_flow}, aum={args.etf_aum}")
+    _etf_written_today = False   # True=etf 值属于 target_date 本身（旧模式），需随 metrics 写库
+    if args.etf_refresh_file:
+        # 按真实交易日批量回刷（修复 2026-09-20 确诊的 off-by-one + 终值修正）。
+        # Farside 每天早上发布的行是前一交易日的数据，且当天行后续会修正为终值；
+        # 此模式由 Agent 用 Tavily 抓 Farside 全表后按「行自带日期」生成 JSON 回刷。
+        try:
+            with open(args.etf_refresh_file, encoding="utf-8") as _f:
+                _refresh = json.load(_f)
+        except Exception as e:
+            print(f"   ❌ refresh 文件解析失败: {e}")
+            sys.exit(2)
+        _n_up, _n_clear = 0, 0
+        for _d, _v in sorted(_refresh.items()):
+            try:
+                datetime.strptime(_d, "%Y-%m-%d")
+            except ValueError:
+                print(f"   ⚠️ 跳过非法日期: {_d}")
+                continue
+            if _v is None:
+                # upsert 的 ON CONFLICT 用 COALESCE 保护旧值，null 会被忽略；
+                # 清除错位行必须显式 UPDATE（只清 etf 两字段，不碰价格等其他维度）
+                _c = get_conn()
+                _c.execute(
+                    "UPDATE daily_metrics SET etf_net_flow_m = NULL, etf_total_aum_b = NULL WHERE date = ?",
+                    (_d,),
+                )
+                _c.commit()
+                _c.close()
+                _n_clear += 1
+                print(f"   🧹 清除错位行 {_d}")
+            else:
+                _p = {"date": _d}
+                if _v.get("flow") is not None:
+                    _p["etf_net_flow_m"] = _v["flow"]
+                if _v.get("aum") is not None:
+                    _p["etf_total_aum_b"] = _v["aum"]
+                upsert_daily_metrics(_p)
+                _n_up += 1
+                print(f"   ✅ 回刷 {_d}: flow={_v.get('flow')}, aum={_v.get('aum')}")
+        log_collect("etf", "ok", f"refresh_file: upsert={_n_up}, cleared={_n_clear}")
+        print(f"   ✅ 批量回刷完成: upsert={_n_up}, cleared={_n_clear}")
+    elif args.etf_flow is not None or args.etf_aum is not None:
+        if args.etf_date:
+            # 指定归属日期：直接按该日期 upsert（不再记到采集日名下）
+            _p = {"date": args.etf_date}
+            if args.etf_flow is not None:
+                _p["etf_net_flow_m"] = args.etf_flow
+            if args.etf_aum is not None:
+                _p["etf_total_aum_b"] = args.etf_aum
+            upsert_daily_metrics(_p)
+            print(f"   ✅ 净流入=${args.etf_flow}M, AUM=${args.etf_aum}B → 记入 {args.etf_date}")
+        else:
+            # 旧模式：记到采集日名下（已知会造成日期右移，仅为兼容保留并提示）
+            metrics["etf_net_flow_m"] = args.etf_flow
+            metrics["etf_total_aum_b"] = args.etf_aum
+            _etf_written_today = True
+            print(f"   ✅ 净流入=${args.etf_flow}M, AUM=${args.etf_aum}B（记入 {target_date}）")
+            print(f"   ⚠️ 未指定 --etf-date：该值将记到采集日名下，若它实为前一交易日数据请改用 --etf-date")
+        if not _etf_written_today:
+            log_collect("etf", "ok", f"flow={args.etf_flow}, aum={args.etf_aum}, as_of={args.etf_date or 'refresh'}")
     else:
         etf_hint = collect_etf_via_tavily(target_date)
         metrics["etf_net_flow_m"] = None
         metrics["etf_total_aum_b"] = None
         print(f"   ⏳ {etf_hint['message']}")
         log_collect("etf", "pending", etf_hint["search_query"])
+
+    # ETF 展示值：报告头部永远显示「最近一个有数据交易日」的值（周末/节假日自动顺延）。
+    # 注意必须存入下划线前缀键（写库段会过滤），否则回读值会随 metrics 再次写入采集日行，
+    # 重新造成日期错位（2026-09-20 第二轮修复时踩过：9/20 名下被回填 433.0）。
+    if _etf_written_today:
+        metrics["_etf_display_flow"] = metrics.get("etf_net_flow_m")
+        metrics["_etf_display_aum"] = metrics.get("etf_total_aum_b")
+    else:
+        try:
+            _conn = get_conn()
+            _row = _conn.execute(
+                "SELECT date, etf_net_flow_m, etf_total_aum_b FROM daily_metrics "
+                "WHERE etf_net_flow_m IS NOT NULL AND date <= ? ORDER BY date DESC LIMIT 1",
+                (target_date,),
+            ).fetchone()
+            _conn.close()
+            if _row:
+                metrics["_etf_display_flow"] = _row[1]
+                metrics["_etf_display_aum"] = _row[2]
+                metrics["_etf_asof"] = _row[0]
+                print(f"   📊 报告展示值: { _row[0] } 净流入=${_row[1]}M")
+        except Exception as e:
+            print(f"   ⚠️ ETF 展示值回读失败: {e}")
     
     # 写入数据库
     print("\n💾 写入数据库...")
@@ -610,7 +695,7 @@ def main():
     
     # 飞书推送 HTML 报告（ETF 数据缺失时跳过推送，避免推送残缺版）
     if html_path and not args.no_feishu:
-        if metrics.get("etf_net_flow_m") is None:
+        if metrics.get("_etf_display_flow") is None:
             print(f"\n📱 跳过飞书推送: ETF 数据缺失（需先补采 --etf-flow/--etf-aum 再推送）")
         elif _already_pushed_today(target_date) and not args.force_push:
             print(f"\n📱 跳过飞书推送: {target_date} 已推送过（幂等跳过；如需重推加 --force-push）")
