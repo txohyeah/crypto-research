@@ -12,7 +12,7 @@ from urllib.request import Request, urlopen
 
 import pandas as pd
 
-from tech_indicators.chart import build_chart_frame, build_reburn_markers, parse_chart_indicators, render_chart_html
+from tech_indicators.chart import build_chart_frame, parse_chart_indicators, render_chart_html
 from .config import Settings, load_settings
 from .exceptions import DataInsufficientError, DatabaseConnectionError, ReportWriteError, UserInputError
 from tech_indicators.indicators import compute_indicators
@@ -745,7 +745,7 @@ def run_crypto_chart(
         "trade_date": end_label,
         "start_date": start_label,
     }
-    markers = build_reburn_markers(chart_frame, timeframe_label=timeframe)
+    markers: list[dict[str, Any]] = []
     output = Path(output_path) if output_path else _default_crypto_chart_output(symbol, timeframe)
     html = render_chart_html(chart_frame, meta, indicator_config, markers=markers)
     try:
@@ -819,7 +819,6 @@ def run_crypto_trade_chart(
 
     chart_frame = build_chart_frame(frame, indicator_config)
     markers = _trade_markers_from_jsonl(trades_file, chart_frame)
-    markers.extend(_reburn_markers_from_decisions(trades_file, chart_frame))
     kline_details = _kline_details_from_decisions(trades_file, chart_frame)
     _apply_decision_golden_bull_lines(chart_frame, kline_details)
     latest = chart_frame.iloc[-1]
@@ -1084,52 +1083,6 @@ def _trade_markers_from_jsonl(path: Path, frame: pd.DataFrame) -> list[dict[str,
                 "entry_candle_low_price": item.get("entry_candle_low_price"),
                 "entry_candle_low_price_before": item.get("entry_candle_low_price_before"),
                 "trade_plan": item.get("trade_plan", {}),
-                **signal_context,
-            }
-        )
-    return markers
-
-
-def _reburn_markers_from_decisions(trades_path: Path, frame: pd.DataFrame) -> list[dict[str, Any]]:
-    decisions_path = trades_path.with_name("decisions.jsonl")
-    if not decisions_path.is_file():
-        return []
-    open_times = set(int(value) for value in frame["open_time_ms"].dropna()) if "open_time_ms" in frame else set()
-    markers: list[dict[str, Any]] = []
-    for item in _read_jsonl_objects(decisions_path):
-        trade_plan = item.get("trade_plan") if isinstance(item.get("trade_plan"), dict) else {}
-        metrics = trade_plan.get("metrics") if isinstance(trade_plan.get("metrics"), dict) else {}
-        if trade_plan.get("reburn_signal") is not True and metrics.get("reburn") is not True:
-            continue
-        open_time_ms = item.get("open_time_ms")
-        if open_time_ms is None:
-            continue
-        key = int(open_time_ms)
-        if open_times and key not in open_times:
-            continue
-        rating = item.get("rating") if isinstance(item.get("rating"), dict) else {}
-        rating_metrics = rating.get("metrics") if isinstance(rating.get("metrics"), dict) else {}
-        price = item.get("price", rating_metrics.get("close"))
-        if price is None:
-            continue
-        signal_context = _trade_signal_context(item)
-        markers.append(
-            {
-                "marker_kind": "reburn",
-                "label": "R",
-                "marker_name": "Reburn low point",
-                "time": item.get("time"),
-                "open_time_ms": key,
-                "side": "reburn",
-                "action": item.get("action"),
-                "price": float(price),
-                "target_position_pct": item.get("target_position_pct"),
-                "return_pct_after": item.get("return_pct"),
-                "equity_after": item.get("equity"),
-                "cash_after": item.get("cash"),
-                "base_qty_after": item.get("base_qty"),
-                "position_pct_after": item.get("current_position_pct"),
-                "trade_plan": trade_plan,
                 **signal_context,
             }
         )

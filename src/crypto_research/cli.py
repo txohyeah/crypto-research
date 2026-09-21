@@ -4,8 +4,6 @@
     crypto-research sync --symbol BTCUSDT --timeframe 1d --lookback-bars 600
     crypto-research rate --symbol BTCUSDT --timeframe 1d --confirm-timeframe 4h
     crypto-research chart --symbol BTCUSDT --timeframe 1d --output /tmp/btc.png
-    crypto-research backtest --symbol BTCUSDT --timeframe 4h
-    crypto-research paper-trade --symbol BTCUSDT --timeframe 4h
 
 输出为单行 JSON：{"ok":true,...} / {"ok":false,"error_code":...,"error":...}
 """
@@ -27,7 +25,6 @@ from .crypto import (
     run_crypto_trade_chart,
 )
 from .crypto_signals import CryptoSignalConfig, run_crypto_signal_sync
-from .crypto_trading import TRADING_STRATEGIES, CryptoTradingConfig, run_crypto_backtest, run_crypto_paper_trade
 from .exceptions import StockResearchError
 
 
@@ -52,20 +49,6 @@ def _print_error(error: BaseException) -> int:
 
 def _cli_progress(message: str) -> None:
     print(f"[crypto-research] {message}", file=sys.stderr, flush=True)
-
-
-def _add_crypto_trading_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--exchange", default="binance")
-    parser.add_argument("--market-type", default="spot")
-    parser.add_argument("--symbol", required=True)
-    parser.add_argument("--timeframe", default="4h")
-    parser.add_argument("--strategy", choices=sorted(TRADING_STRATEGIES), default="golden_bull")
-    parser.add_argument("--initial-capital", type=float, default=5000.0)
-    parser.add_argument("--profit-runner-trigger-pct", type=float, default=0.30)
-    parser.add_argument("--profit-drawdown-stop-pct", type=float, default=0.30)
-    parser.add_argument("--fee-rate", type=float, default=0.001)
-    parser.add_argument("--slippage-bps", type=float, default=5.0)
-    parser.add_argument("--min-history-bars", type=int, default=120)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -133,20 +116,6 @@ def build_parser() -> argparse.ArgumentParser:
     crypto_signal_sync.add_argument("--refresh-all", action="store_true")
     crypto_signal_sync.add_argument("--env")
     crypto_signal_sync.add_argument("--database")
-
-    crypto_backtest = crypto_subparsers.add_parser("backtest")
-    _add_crypto_trading_args(crypto_backtest)
-    crypto_backtest.add_argument("--lookback-bars", type=int, default=720)
-    crypto_backtest.add_argument("--output-dir")
-    crypto_backtest.add_argument("--env")
-    crypto_backtest.add_argument("--database")
-
-    crypto_paper = crypto_subparsers.add_parser("paper-trade")
-    _add_crypto_trading_args(crypto_paper)
-    crypto_paper.add_argument("--lookback-bars", type=int, default=240)
-    crypto_paper.add_argument("--output-dir")
-    crypto_paper.add_argument("--env")
-    crypto_paper.add_argument("--database")
 
     return parser
 
@@ -217,34 +186,6 @@ def _crypto(args: argparse.Namespace) -> dict[str, Any]:
             refresh_all=args.refresh_all,
             progress=_cli_progress,
             progress_every=args.progress_every,
-        )
-    if args.crypto_command in {"backtest", "paper-trade"}:
-        config = CryptoTradingConfig.build(
-            exchange=args.exchange,
-            market_type=args.market_type,
-            symbol=args.symbol,
-            timeframe=args.timeframe,
-            initial_capital=args.initial_capital,
-            profit_runner_trigger_pct=args.profit_runner_trigger_pct,
-            profit_drawdown_stop_pct=args.profit_drawdown_stop_pct,
-            fee_rate=args.fee_rate,
-            slippage_bps=args.slippage_bps,
-            min_history_bars=args.min_history_bars,
-            strategy=args.strategy,
-        )
-        repository = CryptoRepository(load_settings(args.env, args.database))
-        if args.crypto_command == "backtest":
-            return run_crypto_backtest(
-                repository=repository,
-                config=config,
-                lookback_bars=args.lookback_bars,
-                output_dir=args.output_dir,
-            )
-        return run_crypto_paper_trade(
-            repository=repository,
-            config=config,
-            lookback_bars=args.lookback_bars,
-            output_dir=args.output_dir,
         )
     raise StockResearchError("Missing crypto command")
 
