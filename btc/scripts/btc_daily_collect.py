@@ -54,24 +54,41 @@ def _mark_pushed_today(target_date: str) -> None:
         pass
 
 
+def _prev_trading_day(target_date: str) -> str:
+    """返回 target_date 的前一交易日（简单跳过周末）。
+
+    Farside 在美东晚间/夜间更新，每天早间跑采集时表上只有前一交易日的行；
+    当天行要等美东当日盘后才出现。
+    """
+    dt = datetime.strptime(target_date, "%Y-%m-%d") - timedelta(days=1)
+    while dt.weekday() >= 5:  # 5=周六, 6=周日
+        dt -= timedelta(days=1)
+    return dt.strftime("%Y-%m-%d")
+
+
 def collect_etf_via_tavily(target_date: str) -> dict:
     """通过 Tavily 搜索获取 ETF 数据
-    
+
     注意：Tavily API 需要通过 Agent 调用，这里生成搜索命令供 Agent 使用
     返回需要手动补充的提示信息
+
+    2026-09-22 修复：Farside 早间只发布前一交易日的行数据，搜索关键词用
+    target_date（今天）会长期搜不到（collect_log 恒 pending）。改为搜索
+    前一交易日，并在提示里带上 --etf-date 补录参数。
     """
-    # 计算搜索日期格式（英文月 日, 年）
-    dt = datetime.strptime(target_date, "%Y-%m-%d")
-    month_day = dt.strftime("%b %d")  # e.g., "Aug 20"
+    prev_day = _prev_trading_day(target_date)
+    dt = datetime.strptime(prev_day, "%Y-%m-%d")
+    month_day = dt.strftime("%b %d")  # e.g., "Sep 21"
     year = dt.strftime("%Y")
-    
+
     search_query = f"Bitcoin spot ETF net flow {month_day} {year}"
-    
+
     return {
         "source": "etf",
         "status": "need_agent",
         "search_query": search_query,
-        "message": f"需要通过 Tavily 搜索: {search_query}"
+        "etf_date": prev_day,
+        "message": f"需要通过 Tavily 搜索: {search_query}（Farside 早间仅有前一交易日 {prev_day} 数据；补录用 --etf-date {prev_day} --etf-flow <值>）"
     }
 
 
