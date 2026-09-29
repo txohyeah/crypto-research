@@ -28,10 +28,10 @@ def load_chart_b64(path: str) -> str:
 
 def get_latest_metrics(recent: list) -> dict:
     """从多天数据中取每个指标的最新可用值"""
-    metrics = {}
     fields = ['price_usd', 'mvrv', 'fear_greed_value', 'fear_greed_label',
               'funding_rate', 'open_interest', 'etf_net_flow_m', 'etf_total_aum_b',
               'exchange_flow_in', 'exchange_flow_out']
+    metrics = {f: None for f in fields}  # 预置全部键：某字段近期全 NULL 时模板仍可安全渲染为 '-'（2026-09-29 修复 etf_total_aum_b 缺键崩溃）
     for f in fields:
         for r in recent:
             if r.get(f) is not None:
