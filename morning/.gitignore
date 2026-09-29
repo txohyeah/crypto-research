@@ -1,0 +1,4 @@
+# 运行时台账与数据缓存（可由 fetch 脚本重建）
+data/
+__pycache__/
+*.pyc
