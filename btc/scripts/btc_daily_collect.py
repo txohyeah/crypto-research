@@ -17,6 +17,9 @@
 import json
 import sys
 import os
+import re
+import ssl
+import urllib.request
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
@@ -64,6 +67,89 @@ def _prev_trading_day(target_date: str) -> str:
     while dt.weekday() >= 5:  # 5=周六, 6=周日
         dt -= timedelta(days=1)
     return dt.strftime("%Y-%m-%d")
+
+
+# ============================================================
+# ETF 自动采集（2026-09-24 上线）：jina → Farside BTC 表
+# 替代旧的"只提示人工 Tavily 补录"半自动模式；手动参数仍保留。
+# ============================================================
+FARSIDE_JINA = "https://r.jina.ai/https://farside.co.uk/btc/"
+_FETCH_PROXY = "http://127.0.0.1:7890"
+
+
+def _fetch_via_proxy(url: str, timeout: int = 90) -> str:
+    """走本地代理抓取（jina/Farside 直连大陆超时）。"""
+    ctx = ssl.create_default_context()
+    opener = urllib.request.build_opener(
+        urllib.request.ProxyHandler({"http": _FETCH_PROXY, "https": _FETCH_PROXY}),
+        urllib.request.HTTPSHandler(context=ctx))
+    req = urllib.request.Request(url, headers={"User-Agent": "btc-monitor/1.0"})
+    with opener.open(req, timeout=timeout) as r:
+        return r.read().decode("utf-8", errors="replace")
+
+
+def collect_etf_from_farside() -> dict:
+    """jina → Farside BTC ETF 表，解析 {ISO日期: 净流入$M}。
+
+    行样例（与 Farside ETH 表同构，解析逻辑照抄 cf-crypto-site sync_daily 已验证实现）：
+        | 21 Sep 2026 | 381.4 | ... | 999.0 |     最后一个数值列=Total，括号=负数。
+    无日期行（Total/Average 等）不匹配正则，静默跳过。
+    """
+    txt = _fetch_via_proxy(FARSIDE_JINA)
+    flows = {}
+    for line in txt.splitlines():
+        m = re.match(r"\|\s*(\d{2} [A-Za-z]{3} \d{4})\s*\|(.+)\|\s*$", line.strip())
+        if not m:
+            continue
+        cells = [c.strip().replace(",", "") for c in m.group(2).split("|")]
+        if not cells:
+            continue
+        s = cells[-1]
+        neg = s.startswith("(") and s.endswith(")")
+        if neg:
+            s = s[1:-1]
+        try:
+            flow = float(s)
+        except ValueError:
+            continue
+        day = datetime.strptime(m.group(1), "%d %b %Y").date().isoformat()
+        flows[day] = -flow if neg else flow
+    return flows
+
+
+def sync_etf_from_farside(target_date: str) -> tuple:
+    """用 Farside 表回填/修正 daily_metrics 的 ETF 净流入，返回 (fill, fix, detail)。
+
+    保守自愈规则：
+      date <= D-2   Farside 值覆盖（issuers 已报齐的终值；修正 provisional 错值）
+      date == D-1   仅 DB 为空时首填（防 provisional 写入；错值次日由上一条规则自愈）
+      date >= D     跳过（当日行未报齐，宁缺毋滥）
+    """
+    flows = collect_etf_from_farside()
+    if not flows:
+        return 0, 0, "farside parsed=0 rows"
+    d2 = (datetime.strptime(target_date, "%Y-%m-%d").date() - timedelta(days=2)).isoformat()
+    d1 = (datetime.strptime(target_date, "%Y-%m-%d").date() - timedelta(days=1)).isoformat()
+    conn = get_conn()
+    have = {r["date"]: r["etf_net_flow_m"] for r in conn.execute(
+        "SELECT date, etf_net_flow_m FROM daily_metrics WHERE etf_net_flow_m IS NOT NULL")}
+    conn.close()
+    fill, fix, rows = 0, 0, []
+    for d in sorted(flows):
+        if d >= target_date:
+            continue  # 当日行未报齐，跳过
+        v = flows[d]
+        hv = have.get(d)
+        if d <= d2:
+            if hv is None or abs(hv - v) > 0.01:   # 终值覆盖/修正
+                upsert_daily_metrics({"date": d, "etf_net_flow_m": v})
+                rows.append(f"{d}={v}" + (f"(原{hv:g})" if hv is not None else "(新)"))
+                fix += 1
+        elif d == d1 and hv is None:               # 昨日仅首填
+            upsert_daily_metrics({"date": d, "etf_net_flow_m": v})
+            rows.append(f"{d}={v}(首填)")
+            fill += 1
+    return fill, fix, "; ".join(rows[:8]) + (" ..." if len(rows) > 8 else "")
 
 
 def collect_etf_via_tavily(target_date: str) -> dict:
@@ -543,11 +629,26 @@ def main():
         if not _etf_written_today:
             log_collect("etf", "ok", f"flow={args.etf_flow}, aum={args.etf_aum}, as_of={args.etf_date or 'refresh'}")
     else:
-        etf_hint = collect_etf_via_tavily(target_date)
+        # ── 自动环节（2026-09-24）：jina → Farside BTC 表回填缺口+终值修正 ──
         metrics["etf_net_flow_m"] = None
         metrics["etf_total_aum_b"] = None
-        print(f"   ⏳ {etf_hint['message']}")
-        log_collect("etf", "pending", etf_hint["search_query"])
+        try:
+            _fill, _fix, _detail = sync_etf_from_farside(target_date)
+        except Exception as _e:
+            _fill, _fix, _detail = 0, 0, f"farside_fail: {_e}"
+        if _fill == 0 and _fix == 0 and _detail.startswith("farside_fail"):
+            # 抓取失败才回落旧的"人工 Tavily 补录"提示
+            etf_hint = collect_etf_via_tavily(target_date)
+            print(f"   ⏳ {_detail}")
+            print(f"   ⏳ {etf_hint['message']}")
+            log_collect("etf", "pending", _detail)
+        elif _fill == 0 and _fix == 0:
+            print(f"   ✅ Farside 自动核对完成：无缺口（{_detail}）")
+            log_collect("etf", "ok", f"farside_auto: no_gap ({_detail})")
+        else:
+            print(f"   ✅ Farside 自动回填: 首填 {_fill} 行 / 终值修正 {_fix} 行")
+            print(f"      {_detail}")
+            log_collect("etf", "ok", f"farside_auto: fill={_fill}, fix={_fix}; {_detail}")
 
     # ETF 展示值：报告头部永远显示「最近一个有数据交易日」的值（周末/节假日自动顺延）。
     # 注意必须存入下划线前缀键（写库段会过滤），否则回读值会随 metrics 再次写入采集日行，
